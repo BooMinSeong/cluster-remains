@@ -10,3 +10,12 @@ alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py"
 ```
 $ sremain
 ```
+
+## TODO
+
+1. better alias, automatic .bashrc updater.
+2. sinfo updater
+
+---
+
+1. using only shell script (remove python dependency)
