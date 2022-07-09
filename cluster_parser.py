@@ -1,3 +1,6 @@
+import os
+
+
 cluster_info = {
     "2080ti": 48,
     "TITANRTX": 4,
@@ -44,8 +47,14 @@ class bcolors:
 
 
 if __name__ == "__main__":
-    f = open("./cluster_state.txt", "r")
-    lines = f.readlines()[1:]
+    stream = os.popen(
+        'squeue -o "%6i %12j  %9T %12u %8g %15P %4D %20R %4C %13b %8m %11l %11L"'
+    )
+    output = stream.readlines()
+    # lines = "".join(output[1:])
+    # print(lines)
+    lines = output[1:]
+
     gpu_accumulator = {
         "2080ti": 0,
         "TITANRTX": 0,
