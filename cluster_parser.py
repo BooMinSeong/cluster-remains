@@ -90,6 +90,8 @@ if __name__ == "__main__":
         splited = line.strip().split()
         name = splited[5]
         node = splited[7]
+        if node[0] != "n":
+            continue
         gpu_num = splited[9][-1]
         gpu_accumulator[name] += int(gpu_num)
         node_accumulator[node] += int(gpu_num)
