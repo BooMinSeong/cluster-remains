@@ -1,4 +1,10 @@
+from doctest import FAIL_FAST
 import os
+import argparse
+
+parser = argparse.ArgumentParser(description="Argparse Tutorial")
+parser.add_argument("--all", "-a", action="store_true")
+args = parser.parse_args()
 
 
 class bcolors:
@@ -126,16 +132,18 @@ if __name__ == "__main__":
     print("-" * 45)
     for (k, v) in node_info.items():
         remains = v["num"] - node_accumulator[k]
-        if remains != 0:
+        if args.all or remains != 0:
             name = v["name"]
             num = v["num"]
+            color = bcolors.OKGREEN if remains != 0 else bcolors.FAIL
             print(
                 (
-                    bcolors.OKGREEN
+                    color
                     + f"{k:<15} {name:<15} {remains}/{num:<15}"
                     + bcolors.ENDC
                 )
             )
+
             # print(
             #     (bcolors.OKGREEN + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format(
             #         k, v["name"], remains

@@ -15,8 +15,11 @@ alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py"
 `source ~/.bashrc` for initialize
 
 3. Run `sremain`
+
+(Option) -a, --all 
+	return all nodes
 ```
-$ sremain
+[you@mster]$ sremain -a
 
 GPU             REMAIN         
 ------------------------------
@@ -26,7 +29,7 @@ A100            0/8
 4A100           0/8              
 A100-pci        0/8              
 A5000           0/48             
-A100-80GB       1/16             
+A100-80GB       0/16             
 
 NODE            GPU             REMAIN         
 ---------------------------------------------
@@ -36,8 +39,20 @@ n3              2080ti          8/8
 n4              2080ti          8/8              
 n5              2080ti          8/8              
 n6              2080ti          8/8              
+n7              TITANRTX        0/4              
+n8              A100            0/8              
+n9              4A100           0/8              
+n10             A100-pci        0/4              
+n11             A100-pci        0/4              
 n12             A5000           8/8              
-n19             A100-80GB       1/8          
+n13             A5000           0/8              
+n14             A5000           0/8              
+n15             A5000           0/8              
+n16             A5000           0/8              
+n17             A5000           0/8              
+n18             A5000           0/8              
+n19             A100-80GB       0/8              
+n20             A100-80GB       0/8       
 ```
 
 ## TODO
