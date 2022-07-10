@@ -2,11 +2,19 @@
 
 ## Usage
 
-1. Set alias on .bashrc
+1. Clone Project
+
+```
+git clone https://github.com/postech-isoft/cluster-remains.git
+```
+
+2. Set alias on .bashrc
 ```
 alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py"
 ```
+`source ~/.bashrc` for initialize
 
+3. Run `sremain`
 ```
 $ sremain
 
