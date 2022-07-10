@@ -1,37 +1,6 @@
+from mimetypes import init
 import os
 
-
-cluster_info = {
-    "2080ti": 48,
-    "TITANRTX": 4,
-    "A100": 8,
-    "4A100": 8,
-    "A100-pci": 8,
-    "A5000": 48,
-    "A100-80GB": 16,
-}
-
-node_info = {
-    "n1": {"name": "2080ti", "num": 8},
-    "n2": {"name": "2080ti", "num": 8},
-    "n3": {"name": "2080ti", "num": 8},
-    "n4": {"name": "2080ti", "num": 8},
-    "n5": {"name": "2080ti", "num": 8},
-    "n6": {"name": "2080ti", "num": 8},
-    "n7": {"name": "TITANRTX", "num": 4},
-    "n8": {"name": "A100", "num": 8},
-    "n9": {"name": "4A100", "num": 8},
-    "n10": {"name": "A100-pci", "num": 4},
-    "n11": {"name": "A100-pci", "num": 4},
-    "n13": {"name": "A5000", "num": 8},
-    "n14": {"name": "A5000", "num": 8},
-    "n15": {"name": "A5000", "num": 8},
-    "n16": {"name": "A5000", "num": 8},
-    "n18": {"name": "A5000", "num": 8},
-    "n17": {"name": "A5000", "num": 8},
-    "n19": {"name": "A100-80GB", "num": 8},
-    "n20": {"name": "A100-80GB", "num": 8},
-}
 
 
 class bcolors:
@@ -46,7 +15,75 @@ class bcolors:
     UNDERLINE = "\033[4m"
 
 
+def get_cluster_info(lines):
+    cluster_info = {}
+    for line in lines[1:]:
+        parsed = line.strip().split()
+        gpu_name = parsed[0].strip('*') # for 2080ti*
+        if gpu_name.startswith('cpu') or parsed[2].startswith('down'):
+            continue        
+        if gpu_name not in cluster_info:
+            cluster_info[gpu_name] = int(parsed[4]) * int(parsed[5][-1])
+        else:
+            cluster_info[gpu_name] += int(parsed[4]) * int(parsed[5][-1])
+    
+    return cluster_info
+
+
+def get_node_info(lines):
+    node_info = {}
+    sorted_node_info = {}
+
+    for line in lines[1:]:
+        parsed = line.strip().split()
+        gpu_name = parsed[0].strip('*') # for 2080ti*
+        gpu_num = int(parsed[5][-1])
+        node_state = parsed[2]
+        if gpu_name.startswith('cpu'):
+            continue
+        
+        nodelist = parsed[3]
+        assert nodelist.startswith('n')
+        node_range_str = nodelist[1:].strip('[,]')
+        
+        # parse with , first
+        gpu_nodes = []
+        nodes = node_range_str.split(',')
+        for n in nodes:
+            nds = list(range(int(n.split('-')[0]), int(n.split('-')[1])+1)) if '-' in n else [int(n)]
+            gpu_nodes += nds
+        
+        for gnode in gpu_nodes:
+            node_name = f"n{gnode}"
+            if node_name not in node_info:
+                node_info[node_name] = {"name" : gpu_name, "num": gpu_num, "state":node_state}
+
+    sorted_keys = sorted(node_info, key=lambda x : int(x[1:]))
+    for k in sorted_keys:
+        sorted_node_info[k] = node_info[k]
+    
+    return sorted_node_info
+
+
+def init_accumulator(info_dict):
+    init_dict = {}
+    for k in info_dict:
+        init_dict[k] = 0
+    return init_dict
+
+
+
 if __name__ == "__main__":
+    # to get dynmaic info_dicts
+    info_stream = os.popen('sinfo   -o "%16P %14C  %6t %15N %5D %15G  %10m %11l %14f"')
+    info_lines = info_stream.readlines()
+
+    # get dict and init infos
+    cluster_info = get_cluster_info(info_lines)
+    node_info = get_node_info(info_lines)
+    gpu_accumulator = init_accumulator(cluster_info)
+    node_accumulator = init_accumulator(node_info)
+
     stream = os.popen(
         'squeue -o "%6i %12j  %9T %12u %8g %15P %4D %20R %4C %13b %8m %11l %11L"'
     )
@@ -55,37 +92,6 @@ if __name__ == "__main__":
     # print(lines)
     lines = output[1:]
 
-    gpu_accumulator = {
-        "2080ti": 0,
-        "TITANRTX": 0,
-        "A100": 0,
-        "4A100": 0,
-        "A100-pci": 0,
-        "A5000": 0,
-        "A100-80GB": 0,
-    }
-    node_accumulator = {
-        "n1": 0,
-        "n2": 0,
-        "n3": 0,
-        "n4": 0,
-        "n5": 0,
-        "n6": 0,
-        "n7": 0,
-        "n8": 0,
-        "n9": 0,
-        "n10": 0,
-        "n11": 0,
-        "n12": 0,
-        "n13": 0,
-        "n14": 0,
-        "n15": 0,
-        "n16": 0,
-        "n18": 0,
-        "n17": 0,
-        "n19": 0,
-        "n20": 0,
-    }
     for line in lines:
         splited = line.strip().split()
         name = splited[5]
