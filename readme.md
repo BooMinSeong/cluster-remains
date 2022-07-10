@@ -43,7 +43,7 @@ n20 node에 A100-80GB 6 장 남음
 ## TODO
 
 1. better alias, automatic .bashrc updater.
-2. sinfo updater
+2. ~~sinfo updater~~ done by https://github.com/postech-isoft/cluster-remains/pull/1#issue-1299865287
 
 
 
