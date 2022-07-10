@@ -113,9 +113,9 @@ if __name__ == "__main__":
     for (k, v) in cluster_info.items():
         remains = v - gpu_accumulator[k]
         if remains != 0:
-            print((bcolors.OKGREEN + "{:<15} {:<15}" + bcolors.ENDC).format(k, remains))
+            print((bcolors.OKGREEN + f"{k:<15} {remains}/{v:<15}" + bcolors.ENDC))
         else:
-            print((bcolors.FAIL + "{:<15} {:<15}" + bcolors.ENDC).format(k, remains))
+            print((bcolors.FAIL + f"{k:<15} {remains}/{v:<15}" + bcolors.ENDC))
 
     print()
     print(
@@ -127,9 +127,18 @@ if __name__ == "__main__":
     for (k, v) in node_info.items():
         remains = v["num"] - node_accumulator[k]
         if remains != 0:
+            name = v["name"]
+            num = v["num"]
             print(
-                (bcolors.OKGREEN + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format(
-                    k, v["name"], remains
+                (
+                    bcolors.OKGREEN
+                    + f"{k:<15} {name:<15} {remains}/{num:<15}"
+                    + bcolors.ENDC
                 )
             )
+            # print(
+            #     (bcolors.OKGREEN + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format(
+            #         k, v["name"], remains
+            #     )
+            # )
     print()
