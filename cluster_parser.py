@@ -1,6 +1,4 @@
-from mimetypes import init
 import os
-
 
 
 class bcolors:
