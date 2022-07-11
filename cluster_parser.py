@@ -110,6 +110,8 @@ if __name__ == "__main__":
         if node[0] != "n":
             continue
         gpu_num = splited[9][-1]
+        if name.startswith("cpu"):
+            continue
         gpu_accumulator[name] += int(gpu_num)
         node_accumulator[node] += int(gpu_num)
 
@@ -136,13 +138,7 @@ if __name__ == "__main__":
             name = v["name"]
             num = v["num"]
             color = bcolors.OKGREEN if remains != 0 else bcolors.FAIL
-            print(
-                (
-                    color
-                    + f"{k:<15} {name:<15} {remains}/{num:<15}"
-                    + bcolors.ENDC
-                )
-            )
+            print((color + f"{k:<15} {name:<15} {remains}/{num:<15}" + bcolors.ENDC))
 
             # print(
             #     (bcolors.OKGREEN + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format(
