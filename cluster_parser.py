@@ -46,6 +46,9 @@ def get_node_info(lines):
         if gpu_name.startswith("cpu"):
             continue
 
+        if node_state.startswith("down"):
+            continue
+
         nodelist = parsed[3]
         assert nodelist.startswith("n")
         node_range_str = nodelist[1:].strip("[,]")
@@ -91,7 +94,9 @@ if __name__ == "__main__":
 
     # get dict and init infos
     cluster_info = get_cluster_info(info_lines)
-    node_info = get_node_info(info_lines)
+
+    node_info = get_node_info(info_lines)  # type: dict
+
     gpu_accumulator = init_accumulator(cluster_info)
     node_accumulator = init_accumulator(node_info)
 
