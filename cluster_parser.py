@@ -109,7 +109,13 @@ if __name__ == "__main__":
         node = splited[7]
         if node[0] != "n":
             continue
-        gpu_num = splited[9][-1]
+
+        gpu_num = splited[9]
+        if gpu_num.startswith("gpu"):
+            gpu_num = gpu_num[-1]
+        else:
+            gpu_num = 0
+
         if name.startswith("cpu"):
             continue
         gpu_accumulator[name] += int(gpu_num)
