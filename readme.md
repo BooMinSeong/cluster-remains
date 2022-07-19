@@ -1,6 +1,6 @@
 # 클러스터 남은 자리 찾기 자동화
 
-## Usage
+## Installation
 
 1. Clone Project
 
@@ -8,13 +8,30 @@
 git clone https://github.com/postech-isoft/cluster-remains.git
 ```
 
-2. Set alias on .bashrc
+2. Set alias on ~/.bashrc
+
 ```
+echo alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py" >> ~/.bashrc
+```
+or 
+
+```
+vim ~/.bashrc
+
+(Add line below at the end of file.)
+
 alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py"
 ```
+
+
+
+3. Initialize 
+
 `source ~/.bashrc` for initialize
 
-3. Run `sremain`
+## Usage
+
+1. Run `sremain`
 
 (Option) -a, --all 
 	return all nodes
@@ -57,7 +74,7 @@ n20             A100-80GB       0/8
 
 ## TODO
 
-1. better alias, automatic .bashrc updater.
+1. ~~better alias, automatic .bashrc updater.~~
 2. ~~sinfo updater~~ done by https://github.com/postech-isoft/cluster-remains/pull/1#issue-1299865287
 
 
