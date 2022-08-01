@@ -11,7 +11,7 @@ git clone https://github.com/postech-isoft/cluster-remains.git
 2. Set alias on ~/.bashrc
 
 ```
-echo alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py" >> ~/.bashrc
+echo alias sremain="python ~/___YOUR_PATH___/cluster-remains/cluster_parser.py $@" >> ~/.bashrc
 ```
 or 
 
