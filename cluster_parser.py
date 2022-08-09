@@ -89,7 +89,7 @@ def init_accumulator(info_dict):
 
 if __name__ == "__main__":
     # to get dynmaic info_dicts
-    info_stream = os.popen('sinfo   -o "%16P %14C  %6t %15N %5D %15G  %10m %11l %14f"')
+    info_stream = os.popen('sinfo   -o "%16P %14C  %6t %18N %5D %15G  %10m %11l %14f"')
     info_lines = info_stream.readlines()
 
     # get dict and init infos
