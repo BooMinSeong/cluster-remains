@@ -89,7 +89,7 @@ def init_accumulator(info_dict):
 
 if __name__ == "__main__":
     # to get dynmaic info_dicts
-    info_stream = os.popen('sinfo   -o "%16P %14C  %6t %18N %5D %15G  %10m %11l %14f"')
+    info_stream = os.popen('sinfo   -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %14f"')
     info_lines = info_stream.readlines()
 
     # get dict and init infos
@@ -124,10 +124,7 @@ if __name__ == "__main__":
         if name.startswith("cpu"):
             continue
         gpu_accumulator[name] += int(gpu_num)
-        try:
-            node_accumulator[node] += int(gpu_num)
-        except:
-            pass
+        node_accumulator[node] += int(gpu_num)
 
     print()
     print((bcolors.HEADER + "{:<15} {:<15}" + bcolors.ENDC).format("GPU", "REMAIN"))
