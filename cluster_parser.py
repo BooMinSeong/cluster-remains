@@ -124,7 +124,10 @@ if __name__ == "__main__":
         if name.startswith("cpu"):
             continue
         gpu_accumulator[name] += int(gpu_num)
-        node_accumulator[node] += int(gpu_num)
+        try:
+            node_accumulator[node] += int(gpu_num)
+        except:
+            pass
 
     print()
     print((bcolors.HEADER + "{:<15} {:<15}" + bcolors.ENDC).format("GPU", "REMAIN"))
