@@ -107,16 +107,14 @@ if __name__ == "__main__":
     # lines = "".join(output[1:])
     # print(lines)
     lines = output[1:]
-
     for line in lines:
         splited = line.strip().split()
         name = splited[5]
         node = splited[7]
         if node[0] != "n":
             continue
-
         gpu_num = splited[9]
-        if gpu_num.startswith("gpu"):
+        if gpu_num.startswith("gres:gpu"):
             gpu_num = gpu_num[-1]
         else:
             gpu_num = 0
@@ -125,7 +123,6 @@ if __name__ == "__main__":
             continue
         gpu_accumulator[name] += int(gpu_num)
         node_accumulator[node] += int(gpu_num)
-
     print()
     print((bcolors.HEADER + "{:<15} {:<15}" + bcolors.ENDC).format("GPU", "REMAIN"))
     print("-" * 30)

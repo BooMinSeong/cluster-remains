@@ -11,7 +11,8 @@ git clone https://github.com/postech-isoft/cluster-remains.git
 2. Set alias on ~/.bashrc
 
 ```
-echo alias sremain="python ~/___YOUR_PATH___/cluster-remains/cluster_parser.py $@" >> ~/.bashrc
+echo alias sremain=\"python ~/___YOUR_PATH___/cluster-remains/cluster_parser.py\" >> ~/.bashrc
+echo alias smp=\"bash ~/___YOUR_PATH___/cluster-remains/smp.sh\" >> ~/.bashrc
 ```
 or 
 
@@ -21,6 +22,7 @@ vim ~/.bashrc
 (Add line below at the end of file.)
 
 alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py"
+alias smp="bash ~/___YOUR_PATH___/cluster-remains/smp.sh"
 ```
 
 
@@ -36,7 +38,7 @@ alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py"
 (Option) -a, --all 
 	return all nodes
 ```
-[you@mster]$ sremain -a
+[you@gsai-master]$ sremain -a
 
 GPU             REMAIN         
 ------------------------------
@@ -72,11 +74,21 @@ n19             A100-80GB       0/8
 n20             A100-80GB       0/8       
 ```
 
+2. Run `smp`
+
+Slurm My Priority: This command shows my priority. It is useful to check whether the submitted job can be pushed out.
+
+⚠️Warning⚠️- 1회 사용 시 Priority 1 감소
+
+```
+[you@gsai-master]$ smp
+My Priority: 4294899209
+[you@gsai-master]$ smp
+My Priority: 4294899208
+```
 
 
 https://user-images.githubusercontent.com/29483429/202845383-2c8db4b2-df64-4a90-b9d5-56f639a028f5.mov
-
-
 
 
 
