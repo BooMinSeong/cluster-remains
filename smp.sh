@@ -1,6 +1,6 @@
 # slurm my priority
 
-OUTPUT=$(sbatch /home1/hoonrae/cluster-remains/dummy_job.sh)
+OUTPUT=$(sbatch ~/cluster-remains/dummy_job.sh)
 JOB_ID=$(cut -d" " -f4 <<< $OUTPUT)
 JOB_INFO=$(scontrol show job $JOB_ID)
 
