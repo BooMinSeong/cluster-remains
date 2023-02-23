@@ -1,6 +1,7 @@
 from doctest import FAIL_FAST
 import os
 import argparse
+import re
 
 parser = argparse.ArgumentParser(description="Argparse Tutorial")
 parser.add_argument("--all", "-a", action="store_true")
@@ -121,8 +122,20 @@ if __name__ == "__main__":
 
         if name.startswith("cpu"):
             continue
+
+        # for the case like n[16-17]
+        nodes = [node]
+        if len(node.split("-")) >= 2:
+            nodes = re.findall(r"\d+", node)  # reinit with node numbers
+            nodes = ["n" + x for x in nodes]
+            print(nodes)
+        gpu_num = int(gpu_num) / len(nodes)
+
         gpu_accumulator[name] += int(gpu_num)
-        node_accumulator[node] += int(gpu_num)
+
+        for node in nodes:
+            node_accumulator[node] += int(gpu_num)
+
     print()
     print((bcolors.HEADER + "{:<15} {:<15}" + bcolors.ENDC).format("GPU", "REMAIN"))
     print("-" * 30)
