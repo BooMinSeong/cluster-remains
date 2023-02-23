@@ -125,7 +125,7 @@ if __name__ == "__main__":
 
         # for the case like n[16-17]
         nodes = [node]
-        if len(node.split("-")) >= 2:
+        if (len(node.split("-")) >= 2) or (len(node.split(",")) >= 2):
             nodes = re.findall(r"\d+", node)  # reinit with node numbers
             nodes = ["n" + x for x in nodes]
             print(nodes)
