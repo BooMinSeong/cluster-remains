@@ -96,7 +96,7 @@ https://user-images.githubusercontent.com/29483429/202845383-2c8db4b2-df64-4a90-
 
 1. ~~better alias, automatic .bashrc updater.~~
 2. ~~sinfo updater~~ done by https://github.com/postech-isoft/cluster-remains/pull/1#issue-1299865287
-
+3. build setuptools 
 
 
 ---
