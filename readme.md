@@ -1,6 +1,10 @@
 # 클러스터 남은 자리 찾기 자동화
 
 ## Installation
+```
+!V2!
+If you already set alias from previous version, you must erase sremain alias in ~/.bashrc
+```
 
 1. Clone Project
 
@@ -8,28 +12,11 @@
 git clone https://github.com/postech-isoft/cluster-remains.git
 ```
 
-2. Set alias on ~/.bashrc
+2. Install with `PIP`
 
 ```
-echo alias sremain=\"python ~/___YOUR_PATH___/cluster-remains/cluster_parser.py\" >> ~/.bashrc
-echo alias smp=\"bash ~/___YOUR_PATH___/cluster-remains/smp.sh\" >> ~/.bashrc
+pip install -e .
 ```
-or 
-
-```
-vim ~/.bashrc
-
-(Add line below at the end of file.)
-
-alias sremain="python ~/_YOUR_PATH_/cluster-remains/cluster_parser.py"
-alias smp="bash ~/___YOUR_PATH___/cluster-remains/smp.sh"
-```
-
-
-
-3. Initialize 
-
-`source ~/.bashrc` for initialize
 
 ## Usage
 
