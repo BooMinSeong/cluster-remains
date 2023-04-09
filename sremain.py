@@ -28,9 +28,9 @@ def get_cluster_info(lines):
         if gpu_name.startswith("cpu") or parsed[2].startswith("down"):
             continue
         if gpu_name not in cluster_info:
-            cluster_info[gpu_name] = int(parsed[4]) * int(parsed[5][-1])
+            cluster_info[gpu_name] = int(parsed[4]) * int(parsed[8][-4])
         else:
-            cluster_info[gpu_name] += int(parsed[4]) * int(parsed[5][-1])
+            cluster_info[gpu_name] += int(parsed[4]) * int(parsed[8][-4])
 
     return cluster_info
 
@@ -42,7 +42,7 @@ def get_node_info(lines):
     for line in lines[1:]:
         parsed = line.strip().split()
         gpu_name = parsed[0].strip("*")  # for 2080ti*
-        gpu_num = int(parsed[5][-1])
+        gpu_num = int(parsed[8][-4])
         node_state = parsed[2]
         if gpu_name.startswith("cpu"):
             continue
@@ -90,7 +90,7 @@ def init_accumulator(info_dict):
 
 def main():
     # to get dynmaic info_dicts
-    info_stream = os.popen('sinfo   -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %14f"')
+    info_stream = os.popen('sinfo   -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %30f"')
     info_lines = info_stream.readlines()
 
     # get dict and init infos
