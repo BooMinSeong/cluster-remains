@@ -15,6 +15,10 @@ git clone https://github.com/postech-isoft/cluster-remains.git
 2. Install with `PIP`
 
 ```
+cd cluster-remain
+```
+
+```
 pip install -e .
 ```
 
@@ -60,6 +64,9 @@ n18             A5000           0/8
 n19             A100-80GB       0/8              
 n20             A100-80GB       0/8       
 ```
+
+--- 
+Experimental Feature
 
 2. Run `smp`
 
