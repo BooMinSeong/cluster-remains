@@ -49,7 +49,6 @@ def get_node_info(lines):
         node_state = parsed[2]
         if gpu_name.startswith("cpu"):
             continue
-
         if node_state.startswith("down"):
             continue
 
