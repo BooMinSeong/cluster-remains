@@ -28,9 +28,10 @@ def get_cluster_info(lines):
         if gpu_name.startswith("cpu") or parsed[2].startswith("down"):
             continue
         if gpu_name not in cluster_info:
-            cluster_info[gpu_name] = int(parsed[4]) * int(parsed[8][-4])
+            cluster_info[gpu_name] = [int(parsed[4]) * int(parsed[8][-4]), int(parsed[1].split("/")[3])]
         else:
-            cluster_info[gpu_name] += int(parsed[4]) * int(parsed[8][-4])
+            cluster_info[gpu_name][0] += int(parsed[4]) * int(parsed[8][-4])
+            cluster_info[gpu_name][1] += int(parsed[1].split("/")[3])
 
     return cluster_info
 
@@ -43,6 +44,8 @@ def get_node_info(lines):
         parsed = line.strip().split()
         gpu_name = parsed[0].strip("*")  # for 2080ti*
         gpu_num = int(parsed[8][-4])
+        cpu_num = int(int(parsed[1].split("/")[3]) / int(parsed[4]))
+        
         node_state = parsed[2]
         if gpu_name.startswith("cpu"):
             continue
@@ -71,6 +74,7 @@ def get_node_info(lines):
                 node_info[node_name] = {
                     "name": gpu_name,
                     "num": gpu_num,
+                    "cpu_num": cpu_num,
                     "state": node_state,
                 }
 
@@ -84,7 +88,7 @@ def get_node_info(lines):
 def init_accumulator(info_dict):
     init_dict = {}
     for k in info_dict:
-        init_dict[k] = 0
+        init_dict[k] = [0, 0]
     return init_dict
 
 
@@ -95,10 +99,9 @@ def main():
 
     # get dict and init infos
     cluster_info = get_cluster_info(info_lines)
-
     node_info = get_node_info(info_lines)  # type: dict
 
-    gpu_accumulator = init_accumulator(cluster_info)
+    device_accumulator = init_accumulator(cluster_info)
     node_accumulator = init_accumulator(node_info)
 
     stream = os.popen(
@@ -115,6 +118,8 @@ def main():
         if node[0] != "n":
             continue
         gpu_num = splited[9]
+        cpu_num = splited[8]
+
         if gpu_num.startswith("gres:gpu"):
             gpu_num = gpu_num[-1]
         else:
@@ -130,36 +135,42 @@ def main():
             nodes = ["n" + x for x in nodes]
             print(nodes)
         gpu_num = int(gpu_num) / len(nodes)
+        cpu_num = int(cpu_num) / len(nodes)
 
-        gpu_accumulator[name] += int(gpu_num)
+        device_accumulator[name][0] += int(gpu_num)
+        device_accumulator[name][1] += int(cpu_num)
 
         for node in nodes:
-            node_accumulator[node] += int(gpu_num)
+            node_accumulator[node][0] += int(gpu_num)
+            node_accumulator[node][1] += int(cpu_num)
 
     print()
-    print((bcolors.HEADER + "{:<15} {:<15}" + bcolors.ENDC).format("GPU", "REMAIN"))
-    print("-" * 30)
+    print((bcolors.HEADER + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format("GPU", "REMAIN", "CPU_REMAIN"))
+    print("-" * 45)
     for (k, v) in cluster_info.items():
-        remains = v - gpu_accumulator[k]
-        if remains != 0:
-            print((bcolors.OKGREEN + f"{k:<15} {remains}/{v:<15}" + bcolors.ENDC))
+        gpu_remains = v[0] - device_accumulator[k][0]
+        cpu_remains = v[1] - device_accumulator[k][1]
+        if gpu_remains != 0:
+            print((bcolors.OKGREEN + f"{k:<15} {gpu_remains}/{v[0]:<15} {cpu_remains}/{v[1]:<15}" + bcolors.ENDC))
         else:
-            print((bcolors.FAIL + f"{k:<15} {remains}/{v:<15}" + bcolors.ENDC))
+            print((bcolors.FAIL + f"{k:<15} {gpu_remains}/{v[0]:<15} {cpu_remains}/{v[1]:<15}" + bcolors.ENDC))
 
     print()
     print(
-        (bcolors.HEADER + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format(
-            "NODE", "GPU", "REMAIN"
+        (bcolors.HEADER + "{:<15} {:<15} {:<15} {:<15}" + bcolors.ENDC).format(
+            "NODE", "GPU", "REMAIN", "CPU_REMAIN"
         )
     )
-    print("-" * 45)
+    print("-" * 60)
     for (k, v) in node_info.items():
-        remains = v["num"] - node_accumulator[k]
-        if args.all or remains != 0:
+        gpu_remains = v["num"] - node_accumulator[k][0]
+        cpu_remains = v["cpu_num"] - node_accumulator[k][1]
+        if args.all or gpu_remains != 0:
             name = v["name"]
             num = v["num"]
-            color = bcolors.OKGREEN if remains != 0 else bcolors.FAIL
-            print((color + f"{k:<15} {name:<15} {remains}/{num:<15}" + bcolors.ENDC))
+            cpu_num = v["cpu_num"]
+            color = bcolors.OKGREEN if gpu_remains != 0 else bcolors.FAIL
+            print((color + f"{k:<15} {name:<15} {gpu_remains}/{num:<15} {cpu_remains}/{cpu_num:<15}" + bcolors.ENDC))
 
             # print(
             #     (bcolors.OKGREEN + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format(
