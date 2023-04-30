@@ -149,7 +149,7 @@ def main():
     for (k, v) in cluster_info.items():
         gpu_remains = v[0] - device_accumulator[k][0]
         cpu_remains = v[1] - device_accumulator[k][1]
-        if gpu_remains != 0:
+        if gpu_remains != 0 and cpu_remains != 0:
             print((bcolors.OKGREEN + f"{k:<15} {gpu_remains}/{v[0]:<15} {cpu_remains}/{v[1]:<15}" + bcolors.ENDC))
         else:
             print((bcolors.FAIL + f"{k:<15} {gpu_remains}/{v[0]:<15} {cpu_remains}/{v[1]:<15}" + bcolors.ENDC))
@@ -164,11 +164,11 @@ def main():
     for (k, v) in node_info.items():
         gpu_remains = v["num"] - node_accumulator[k][0]
         cpu_remains = v["cpu_num"] - node_accumulator[k][1]
-        if args.all or gpu_remains != 0:
+        if args.all or (gpu_remains != 0 and cpu_remains != 0) :
             name = v["name"]
             num = v["num"]
             cpu_num = v["cpu_num"]
-            color = bcolors.OKGREEN if gpu_remains != 0 else bcolors.FAIL
+            color = bcolors.OKGREEN if gpu_remains != 0 and cpu_remains != 0 else bcolors.FAIL
             print((color + f"{k:<15} {name:<15} {gpu_remains}/{num:<15} {cpu_remains}/{cpu_num:<15}" + bcolors.ENDC))
 
             # print(
