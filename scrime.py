@@ -99,6 +99,7 @@ def main():
     info_lines = info_stream.readlines()
 
     criminal = defaultdict(int)
+    pending_criminal = defaultdict(int)
 
     stream = os.popen(
         'squeue -o "%6i %12j  %9T %12u %8g %15P %4D %20R %4C %13b %8m %11l %11L"'
@@ -108,6 +109,7 @@ def main():
     # print(lines)
 
     total_cnt = 0
+    pending_cnt = 0
     lines = output[1:]
     for line in lines:
         splited = line.strip().split()
@@ -115,8 +117,15 @@ def main():
         node = splited[7]
         user = splited[3]
 
-        if node[0] != "n":
-            continue
+
+        state = None
+        # it's Running  
+        if node[0] == "n":
+            state = "running"
+        # it's Pending
+        if node == "(Priority)" or node == "(Resources)" or node[0]=="(":
+            state = "pending"
+
         gpu_num = splited[9]
         cpu_num = splited[8]
 
@@ -135,11 +144,19 @@ def main():
             nodes = ["n" + x for x in nodes]
             print(nodes)
         gpu_num = int(gpu_num) / len(nodes)
-        cpu_num = int(cpu_num) / len(nodes)
+        
+        if state == "running":
+            cpu_num = int(cpu_num) / len(nodes)
 
         # print(user, nodes, gpu_num, cpu_num, partition)
-        criminal[user] += int(gpu_num)
-        total_cnt+=int(gpu_num)
+
+        if state == "running":
+            criminal[user] += int(gpu_num)
+            total_cnt+=int(gpu_num)
+
+        if state == "pending":
+            pending_criminal[user] += int(gpu_num)
+            pending_cnt+=int(gpu_num)
 
 
 
@@ -149,7 +166,11 @@ def main():
     for k, v in criminal.items():
         print(f"{k:<15}\t\t{v}", end="")
         if v > total_cnt*0.1:
-            print(f"<--- criminal !!! {100*v/total_cnt:.2f}% use",  end="")
+            print(f" <--- criminal !!! {100*v/total_cnt:.2f}% use",  end=" ")
+        
+        print(f"  Queued: {pending_criminal[k]} GPUS", end="")
+        if pending_criminal[k] > 50:
+            print(" <--- WTF", end="")
         print()
         # print(f"User \t Num_GPUs")
 
