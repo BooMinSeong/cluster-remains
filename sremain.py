@@ -134,7 +134,6 @@ def main():
         if (len(node.split("-")) >= 2) or (len(node.split(",")) >= 2):
             nodes = re.findall(r"\d+", node)  # reinit with node numbers
             nodes = ["n" + x for x in nodes]
-            print(nodes)
         gpu_num = int(gpu_num) / len(nodes)
         cpu_num = int(cpu_num) / len(nodes)
 
