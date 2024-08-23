@@ -129,7 +129,7 @@ def main():
         gpu_num = splited[9]
         cpu_num = splited[8]
 
-        if gpu_num.startswith("gres:gpu"):
+        if gpu_num.startswith("gres/gpu"):
             gpu_num = gpu_num[-1]
         else:
             gpu_num = 0
