@@ -57,22 +57,9 @@ def get_node_info(lines):
             continue
 
         nodelist = parsed[3]
-        assert nodelist.startswith("n")
-        node_range_str = nodelist[1:].strip("[,]")
+        node_name_list = nodelist_to_node_name(nodelist)
 
-        # parse with , first
-        gpu_nodes = []
-        nodes = node_range_str.split(",")
-        for n in nodes:
-            nds = (
-                list(range(int(n.split("-")[0]), int(n.split("-")[1]) + 1))
-                if "-" in n
-                else [int(n)]
-            )
-            gpu_nodes += nds
-
-        for gnode in gpu_nodes:
-            node_name = f"n{gnode}"
+        for node_name in node_name_list:
             if node_name not in node_info:
                 node_info[node_name] = {
                     "name": gpu_name,
@@ -87,6 +74,42 @@ def get_node_info(lines):
 
     return sorted_node_info
 
+
+def get_draining_node_info(lines):
+    draining_nodes = []
+    
+    for line in lines[1:]:
+        parsed = line.strip().split()
+        node_state = parsed[2]
+        if not node_state.startswith("drng"):
+            continue
+        nodelist = parsed[3]
+        draining_node_name_list = nodelist_to_node_name(nodelist)
+        draining_nodes += draining_node_name_list
+        
+    return draining_nodes
+
+
+def nodelist_to_node_name(nodelist):
+    node_name_list = []
+    
+    assert nodelist.startswith("n")
+    node_range_str = nodelist[1:].strip("[,]")
+
+    # parse with , first
+    gpu_nodes = []
+    nodes = node_range_str.split(",")
+    for n in nodes:
+        nds = (
+            list(range(int(n.split("-")[0]), int(n.split("-")[1]) + 1))
+            if "-" in n
+            else [int(n)]
+        )
+        gpu_nodes += nds
+
+    for gnode in gpu_nodes:
+        node_name_list.append(f"n{gnode}")
+    return node_name_list
 
 def init_accumulator(info_dict):
     init_dict = {}
@@ -103,6 +126,7 @@ def main():
     # get dict and init infos
     cluster_info = get_cluster_info(info_lines)
     node_info = get_node_info(info_lines)  # type: dict
+    drng_node_list = get_draining_node_info(info_lines)
 
     device_accumulator = init_accumulator(cluster_info)
     node_accumulator = init_accumulator(node_info)
@@ -119,6 +143,8 @@ def main():
         name = splited[5]
         node = splited[7]
         if node[0] != "n":
+            continue
+        if node in drng_node_list:
             continue
         gpu_num = splited[9]
         cpu_num = splited[8]
