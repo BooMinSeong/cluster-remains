@@ -15,7 +15,7 @@ git clone https://github.com/postech-isoft/cluster-remains.git
 2. Install with `PIP`
 
 ```
-cd cluster-remain
+cd cluster-remains
 ```
 
 ```
