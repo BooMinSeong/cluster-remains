@@ -25,7 +25,7 @@ def get_cluster_info(lines):
     for line in lines[1:]:
         parsed = line.strip().split()
         gpu_name = parsed[0].strip("*")  # for 2080ti*
-        if gpu_name.startswith("cpu") or parsed[2].startswith("down") or parsed[2].startswith("drain") or parsed[2].startswith("drng"):
+        if gpu_name.startswith("cpu") or parsed[2].startswith("down") or parsed[2].startswith("drain") or parsed[2].startswith("drng") or parsed[2].startswith("unk"):
             continue
         if gpu_name not in cluster_info:
             cluster_info[gpu_name] = [int(parsed[4]) * int(parsed[8][-4]), int(parsed[1].split("/")[3])]
@@ -54,6 +54,8 @@ def get_node_info(lines):
         if node_state.startswith("drain"):
             continue
         if node_state.startswith("drng"):
+            continue
+        if node_state.startswith("unk"):
             continue
 
         nodelist = parsed[3]
