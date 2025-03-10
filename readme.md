@@ -66,6 +66,7 @@ n20             A100-80GB       0/8
 ```
 
 --- 
+https://user-images.githubusercontent.com/29483429/202845383-2c8db4b2-df64-4a90-b9d5-56f639a028f5.mov
 
 
 ## TODO
