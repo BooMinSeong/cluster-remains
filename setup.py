@@ -7,6 +7,7 @@ setup(
         'console_scripts': [
             'sremain = sremain:main',
             'scrime = scrime:main',
+            'slog = slog:main_cli',
         ],
     }
 )
