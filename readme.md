@@ -66,24 +66,7 @@ n20             A100-80GB       0/8
 ```
 
 --- 
-Experimental Feature
-
-2. Run `smp`
-
-Slurm My Priority: This command shows my priority. It is useful to check whether the submitted job can be pushed out.
-
-⚠️Warning⚠️- 1회 사용 시 Priority 1 감소
-
-```
-[you@gsai-master]$ smp
-My Priority: 4294899209
-[you@gsai-master]$ smp
-My Priority: 4294899208
-```
-
-
 https://user-images.githubusercontent.com/29483429/202845383-2c8db4b2-df64-4a90-b9d5-56f639a028f5.mov
-
 
 
 ## TODO
