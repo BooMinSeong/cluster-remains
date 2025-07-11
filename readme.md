@@ -69,6 +69,18 @@ n20             A100-80GB       0/8
 https://user-images.githubusercontent.com/29483429/202845383-2c8db4b2-df64-4a90-b9d5-56f639a028f5.mov
 
 
+### Extract Slurm Job Output Log with `slog`
+
+You can use the `slog` command to print the output log file of a Slurm job by providing its job ID. This will automatically extract the StdOut log path from `scontrol show job` and print its contents.
+
+**Example:**
+
+```
+[you@gsai-master]$ slog 732893
+```
+
+This will print the contents of the log file referenced by `StdOut` for job 732893.
+
 ## TODO
 
 1. ~~better alias, automatic .bashrc updater.~~
