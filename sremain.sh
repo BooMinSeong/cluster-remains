@@ -177,7 +177,7 @@ read_squeue() {
   if [[ -n "$SQUEUE_FILE" ]]; then
     squeue_lines=$(cat -- "$SQUEUE_FILE")
   else
-    squeue_lines=$(squeue || true)
+    squeue_lines=$(squeue -o "%6i %12j  %9T %12u %8g %15P %4D %20R %4C %40b %8m %11l %11L" || true)
   fi
 
   # Skip header; parse from right to be robust
