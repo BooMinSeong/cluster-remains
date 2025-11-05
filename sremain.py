@@ -185,6 +185,8 @@ def main():
 
     device_accumulator = init_accumulator(cluster_info)
     node_accumulator = init_accumulator(node_info)
+    # Track per-node GPU usage by user (populated when -a is set)
+    node_user_gpu = {}
 
     if args.file:
         try:
@@ -207,6 +209,7 @@ def main():
         if len(splited) < 12:
             continue
         name = splited[-8]
+        user = splited[-10]
         node = splited[-6]
         if node[0] != "n":
             continue
@@ -239,6 +242,14 @@ def main():
                 node_accumulator[node][0] += int(gpu_num)
                 node_accumulator[node][1] += int(cpu_num)
 
+            # Per-node, per-user GPU usage (only needed for -a view)
+            if args.all:
+                if node not in node_user_gpu:
+                    node_user_gpu[node] = {}
+                if user not in node_user_gpu[node]:
+                    node_user_gpu[node][user] = 0
+                node_user_gpu[node][user] += int(gpu_num)
+
     print()
     print((bcolors.HEADER + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format("GPU", "REMAIN", "CPU_REMAIN"))
     print("-" * 45)
@@ -253,12 +264,20 @@ def main():
             print((bcolors.FAIL + f"{k:<15} {gpu_remains}/{v[0]:<{15 - gpu_len}} {cpu_remains}/{v[1]:<{15 - cpu_len}}" + bcolors.ENDC))
 
     print()
-    print(
-        (bcolors.HEADER + "{:<15} {:<15} {:<15} {:<15}" + bcolors.ENDC).format(
-            "NODE", "GPU", "REMAIN", "CPU_REMAIN"
+    if args.all:
+        print(
+            (bcolors.HEADER + "{:<15} {:<15} {:<15} {:<15} {:<45}" + bcolors.ENDC).format(
+                "NODE", "GPU", "REMAIN", "CPU_REMAIN", "USERS"
+            )
         )
-    )
-    print("-" * 60)
+        print("-" * 100)
+    else:
+        print(
+            (bcolors.HEADER + "{:<15} {:<15} {:<15} {:<15}" + bcolors.ENDC).format(
+                "NODE", "GPU", "REMAIN", "CPU_REMAIN"
+            )
+        )
+        print("-" * 60)
     for (k, v) in node_info.items():
         gpu_remains = v["num"] - node_accumulator[k][0]
         cpu_remains = v["cpu_num"] - node_accumulator[k][1]
@@ -275,7 +294,13 @@ def main():
             else:
                 color = bcolors.OKGREEN
                 
-            print((color + f"{k:<15} {name:<15} {gpu_remains}/{num:<{15 - gpu_len}} {cpu_remains}/{cpu_num:<{15 - cpu_len}}" + bcolors.ENDC))
+            if args.all:
+                usage = node_user_gpu.get(k, {})
+                items = sorted(usage.items(), key=lambda x: (-x[1], x[0])) if usage else []
+                summary = ", ".join([f"{u}({g})" for u, g in items]) if items else "-"
+                print((color + f"{k:<15} {name:<15} {gpu_remains}/{num:<{15 - gpu_len}} {cpu_remains}/{cpu_num:<{15 - cpu_len}} {summary:<45}" + bcolors.ENDC))
+            else:
+                print((color + f"{k:<15} {name:<15} {gpu_remains}/{num:<{15 - gpu_len}} {cpu_remains}/{cpu_num:<{15 - cpu_len}}" + bcolors.ENDC))
 
             # print(
             #     (bcolors.OKGREEN + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format(
