@@ -67,17 +67,6 @@ n2              2080ti          7/8             6/20
 If you pass `-f sample.squeue`, the tool expects a header like:
 `JOBID NAME STATE USER PARTITION NODE NODELIST(REASON) CPUS TRES_PER_NODE MIN_MEM TIME_LIMIT TIME_LEFT`.
 
-## Optional: Job log helper
-
-`slog.py` prints the StdOut log of a Slurm job by ID:
-```
-python3 slog.py 732893
-```
-To make it a command, add a wrapper or alias in your rc, e.g.:
-```
-alias slog='python3 /path/to/cluster-remains/slog.py'
-```
 
 ## Notes
-- The repository keeps the original Python version (`sremain.py`) for reference, but the recommended tool is the Bash version.
 - Tested against saved outputs (`sample.squeue`) and live Slurm on our cluster.
