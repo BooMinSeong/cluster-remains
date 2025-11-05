@@ -246,7 +246,7 @@ print_gpu_table() {
     local rem_c=$(( total_c - used_c ))
     local color="$OKGREEN"
     if (( rem_g == 0 )); then color="$FAIL"; fi
-    printf "%b%-15s %s/%-13s %s/%-13s%b\n" "$color" "$part" "$rem_g" "$total_g" "$rem_c" "$total_c" "$ENDC"
+    printf "%b%-15s %3s/%-13s %3s/%-13s%b\n" "$color" "$part" "$rem_g" "$total_g" "$rem_c" "$total_c" "$ENDC"
   done
   echo
 }
@@ -301,10 +301,10 @@ print_node_table() {
       if [[ -n "$lines" ]]; then
         summary=$(printf "%b" "$lines" | sort -k1,1nr -k2,2 | awk '{printf "%s(%s, %s), ", $2, $1, $3}' | sed 's/, $//')
       fi
-      printf "%b%-15s %-15s %s/%-13s %s/%-13s %-45s%b\n" \
+      printf "%b%-15s %-15s %3s/%-13s %3s/%-13s %-45s%b\n" \
         "$color" "$n" "$part" "$rem_g" "$total_g" "$rem_c" "$total_c" "$summary" "$ENDC"
     else
-      printf "%b%-15s %-15s %s/%-13s %s/%-13s%b\n" \
+      printf "%b%-15s %-15s %3s/%-13s %3s/%-13s%b\n" \
         "$color" "$n" "$part" "$rem_g" "$total_g" "$rem_c" "$total_c" "$ENDC"
     fi
   done <<< "$sorted_nodes"
