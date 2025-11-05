@@ -5,6 +5,12 @@ import re
 
 parser = argparse.ArgumentParser(description="Argparse Tutorial")
 parser.add_argument("--all", "-a", action="store_true")
+parser.add_argument(
+    "--file",
+    "-f",
+    type=str,
+    help="Path to a file containing squeue output to test with",
+)
 args = parser.parse_args()
 
 
@@ -119,11 +125,58 @@ def init_accumulator(info_dict):
         init_dict[k] = [0, 0]
     return init_dict
 
+def parse_gpu_count_from_tres(field: str) -> int:
+    """
+    Parse GPU count from Slurm TRES_PER_NODE field values.
+
+    Handles variants like:
+      - 'gres/gpu:1'
+      - 'gres/gpu=1'
+      - 'gres/gpu:MODEL'           -> assume 1
+      - 'gres/gpu:MODEL:4'         -> 4
+      - 'gres/gpu:MODEL:COUNT,...' -> COUNT (last numeric part)
+    Returns 0 for non-gpu fields (e.g., 'N/A').
+    """
+    if not field or not field.startswith("gres/gpu"):
+        return 0
+    # Normalize separators to ':' then split
+    norm = field.replace("=", ":")
+    parts = norm.split(":")
+    # parts example: ['gres/gpu', 'L40S', '4'] or ['gres/gpu', '1']
+    # Search from right for a purely numeric token
+    for token in reversed(parts):
+        if token.isdigit():
+            try:
+                return int(token)
+            except Exception:
+                break
+    # If there was a model but no explicit count, default to 1
+    if len(parts) >= 2 and parts[1]:
+        return 1
+    return 0
 
 def main():
-    # to get dynmaic info_dicts
-    info_stream = os.popen('sinfo   -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %30f"')
-    info_lines = info_stream.readlines()
+    # to get dynamic info_dicts
+    if args.file:
+        # When testing with -f, try to load sinfo snapshot from 20251105.sinfo
+        sinfo_candidate = os.path.join(os.path.dirname(args.file), "20251105.sinfo")
+        if not os.path.exists(sinfo_candidate):
+            sinfo_candidate = "20251105.sinfo"
+        if os.path.exists(sinfo_candidate):
+            try:
+                with open(sinfo_candidate, "r") as sf:
+                    info_lines = sf.readlines()
+            except Exception as e:
+                print(f"Failed to read sinfo file '{sinfo_candidate}': {e}")
+                info_stream = os.popen('sinfo   -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %30f"')
+                info_lines = info_stream.readlines()
+        else:
+            # Fallback to live sinfo if snapshot not found
+            info_stream = os.popen('sinfo   -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %30f"')
+            info_lines = info_stream.readlines()
+    else:
+        info_stream = os.popen('sinfo   -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %30f"')
+        info_lines = info_stream.readlines()
 
     # get dict and init infos
     cluster_info = get_cluster_info(info_lines)
@@ -133,28 +186,35 @@ def main():
     device_accumulator = init_accumulator(cluster_info)
     node_accumulator = init_accumulator(node_info)
 
-    stream = os.popen(
-        'squeue -o "%6i %12j  %9T %12u %8g %15P %4D %20R %4C %13b %8m %11l %11L"'
-    )
-    output = stream.readlines()
+    if args.file:
+        try:
+            with open(args.file, "r") as f:
+                output = f.readlines()
+        except Exception as e:
+            print(f"Failed to read squeue file '{args.file}': {e}")
+            return
+    else:
+        stream = os.popen(
+            'squeue -o "%6i %12j  %9T %12u %8g %15P %4D %20R %4C %40b %8m %11l %11L"'
+        )
+        output = stream.readlines()
     # lines = "".join(output[1:])
     # print(lines)
     lines = output[1:]
     for line in lines:
         splited = line.strip().split()
-        name = splited[5]
-        node = splited[7]
+        # Robust parse: columns from the right to tolerate spaces in NAME
+        if len(splited) < 12:
+            continue
+        name = splited[-8]
+        node = splited[-6]
         if node[0] != "n":
             continue
         if node in drng_node_list:
             continue
-        gpu_num = splited[9]
-        cpu_num = splited[8]
-
-        if gpu_num.startswith("gres/gpu"):
-            gpu_num = gpu_num[-1]
-        else:
-            gpu_num = 0
+        cpu_num = splited[-5]
+        gpu_field = splited[-4]
+        gpu_num = parse_gpu_count_from_tres(gpu_field)
 
         if name.startswith("cpu"):
             continue
@@ -164,15 +224,20 @@ def main():
         if (len(node.split("-")) >= 2) or (len(node.split(",")) >= 2):
             nodes = re.findall(r"\d+", node)  # reinit with node numbers
             nodes = ["n" + x for x in nodes]
-        gpu_num = int(gpu_num) / len(nodes)
-        cpu_num = int(cpu_num) / len(nodes)
+        try:
+            gpu_num = int(gpu_num) / len(nodes)
+            cpu_num = int(cpu_num) / len(nodes)
+        except Exception:
+            continue
 
-        device_accumulator[name][0] += int(gpu_num)
-        device_accumulator[name][1] += int(cpu_num)
+        if name in device_accumulator:
+            device_accumulator[name][0] += int(gpu_num)
+            device_accumulator[name][1] += int(cpu_num)
 
         for node in nodes:
-            node_accumulator[node][0] += int(gpu_num)
-            node_accumulator[node][1] += int(cpu_num)
+            if node in node_accumulator:
+                node_accumulator[node][0] += int(gpu_num)
+                node_accumulator[node][1] += int(cpu_num)
 
     print()
     print((bcolors.HEADER + "{:<15} {:<15} {:<15}" + bcolors.ENDC).format("GPU", "REMAIN", "CPU_REMAIN"))
