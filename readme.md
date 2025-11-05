@@ -69,6 +69,24 @@ n20             A100-80GB       0/8
 https://user-images.githubusercontent.com/29483429/202845383-2c8db4b2-df64-4a90-b9d5-56f639a028f5.mov
 
 
+### Test with squeue file
+
+You can test `sremain` using a saved `squeue` output file (e.g., `sample.squeue`) instead of querying live.
+
+```
+[you@gsai-master]$ sremain -f sample.squeue
+[you@gsai-master]$ sremain -a -f sample.squeue
+```
+
+When using `-f/--file`, `sremain` also looks for a matching `sinfo` snapshot named `20251105.sinfo` and uses it for cluster/node info. It searches first in the same directory as the provided squeue file, then in the current directory. If not found, it falls back to live `sinfo`.
+
+```
+# files side-by-side
+./sample.squeue
+./20251105.sinfo
+```
+
+
 ### Extract Slurm Job Output Log with `slog`
 
 You can use the `slog` command to print the output log file of a Slurm job by providing its job ID. This will automatically extract the StdOut log path from `scontrol show job` and print its contents.
