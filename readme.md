@@ -1,111 +1,83 @@
-# 클러스터 남은 자리 찾기 자동화
+# Cluster Remains (Slurm)
 
-## Installation
-```
-!V2!
-If you already set alias from previous version, you must erase sremain alias in ~/.bashrc
-```
+Show remaining GPU and CPU capacity per GPU type (partition) and per node in a Slurm cluster.
 
-1. Clone Project
+- Pure Bash (`sremain.sh`) — no Python runtime needed.
+- Legacy Python scripts are kept for reference and optional use.
 
-```
-git clone https://github.com/postech-isoft/cluster-remains.git
-```
+## Requirements
+- Bash 4+ (uses associative arrays)
+- Slurm client tools available in PATH: `squeue`, `sinfo`, `scontrol`
 
-2. Install with `PIP`
+## Install
 
-```
-cd cluster-remains
-```
+- Quick install (adds `sremain` to your shell):
+  - Clone: `git clone https://github.com/postech-isoft/cluster-remains.git`
+  - Run installer: `./cluster-remains/install.sh`
+  - Reload shell: `source ~/.bashrc`
 
+Installer details:
+- Adds a small alias block to your rc (`~/.bashrc` by default) so you can run `sremain` from anywhere.
+- Also creates an optional wrapper at `~/.local/bin/sremain` if available.
+- Uninstall: `./install.sh --uninstall`
+- Use a different rc file: `./install.sh --rc ~/.zshrc`
+
+Manual alternative:
 ```
-pip install -e .
+# in your shell rc
+sremain() {
+  "/path/to/cluster-remains/sremain.sh" "$@"
+}
 ```
 
 ## Usage
 
-1. Run `sremain`
+`sremain [-a|--all] [-f|--file PATH] [-h|--help]`
 
-(Option) -a, --all 
-	return all nodes
+- `-a, --all`  Show all nodes and include a USERS(G, C) summary per node.
+- `-f, --file PATH`  Read `squeue` output from a file for offline testing. When set, the tool also looks for `20251105.sinfo` (in the same directory or the current directory) for node/partition layout. If not found, it falls back to live `sinfo`.
+
+Examples:
 ```
-[you@gsai-master]$ sremain -a
-
-GPU             REMAIN         
-------------------------------
-2080ti          44/48             
-TITANRTX        0/4              
-A100            0/8              
-4A100           0/8              
-A100-pci        0/8              
-A5000           0/48             
-A100-80GB       0/16             
-
-NODE            GPU             REMAIN         
----------------------------------------------
-n1              2080ti          4/8              
-n2              2080ti          8/8              
-n3              2080ti          8/8              
-n4              2080ti          8/8              
-n5              2080ti          8/8              
-n6              2080ti          8/8              
-n7              TITANRTX        0/4              
-n8              A100            0/8              
-n9              4A100           0/8              
-n10             A100-pci        0/4              
-n11             A100-pci        0/4              
-n12             A5000           8/8              
-n13             A5000           0/8              
-n14             A5000           0/8              
-n15             A5000           0/8              
-n16             A5000           0/8              
-n17             A5000           0/8              
-n18             A5000           0/8              
-n19             A100-80GB       0/8              
-n20             A100-80GB       0/8       
+sremain
+sremain -a
+sremain -f sample.squeue
+sremain -a -f sample.squeue
 ```
 
---- 
-https://user-images.githubusercontent.com/29483429/202845383-2c8db4b2-df64-4a90-b9d5-56f639a028f5.mov
-
-
-### Test with squeue file
-
-You can test `sremain` using a saved `squeue` output file (e.g., `sample.squeue`) instead of querying live.
-
+Sample output (truncated):
 ```
-[you@gsai-master]$ sremain -f sample.squeue
-[you@gsai-master]$ sremain -a -f sample.squeue
+GPU             REMAIN          CPU_REMAIN
+-----------------------------------------
+2080ti          44/46           108/120
+
+NODE            GPU             REMAIN          CPU_REMAIN
+---------------------------------------------------------
+n2              2080ti          7/8             6/20
 ```
 
-When using `-f/--file`, `sremain` also looks for a matching `sinfo` snapshot named `20251105.sinfo` and uses it for cluster/node info. It searches first in the same directory as the provided squeue file, then in the current directory. If not found, it falls back to live `sinfo`.
+## Parsing notes
 
+- `sremain` uses this `squeue` format string internally (group column removed):
+  - `squeue -o "%6i %12j  %9T %12u %15P %4D %20R %4C %40b %8m %11l %11L"`
+- The parser reads columns from the right to tolerate spaces in job NAMEs.
+- GPU count is derived from the `TRES_PER_NODE` field (e.g., `gres/gpu:MODEL:4`).
+- Draining/down/unknown nodes are excluded; CPU-only partitions are ignored.
+
+If you pass `-f sample.squeue`, the tool expects a header like:
+`JOBID NAME STATE USER PARTITION NODE NODELIST(REASON) CPUS TRES_PER_NODE MIN_MEM TIME_LIMIT TIME_LEFT`.
+
+## Optional: Job log helper
+
+`slog.py` prints the StdOut log of a Slurm job by ID:
 ```
-# files side-by-side
-./sample.squeue
-./20251105.sinfo
+python3 slog.py 732893
+```
+To make it a command, add a wrapper or alias in your rc, e.g.:
+```
+alias slog='python3 /path/to/cluster-remains/slog.py'
 ```
 
-
-### Extract Slurm Job Output Log with `slog`
-
-You can use the `slog` command to print the output log file of a Slurm job by providing its job ID. This will automatically extract the StdOut log path from `scontrol show job` and print its contents.
-
-**Example:**
-
-```
-[you@gsai-master]$ slog 732893
-```
-
-This will print the contents of the log file referenced by `StdOut` for job 732893.
-
-## TODO
-
-1. ~~better alias, automatic .bashrc updater.~~
-2. ~~sinfo updater~~ done by https://github.com/postech-isoft/cluster-remains/pull/1#issue-1299865287
-3. build setuptools 
-
-
----
-
-1. using only shell script (remove python dependency)
+## Notes
+- The repository keeps the original Python version (`sremain.py`) for reference, but the recommended tool is the Bash version.
+- Tested against saved outputs (`sample.squeue`) and live Slurm on our cluster.

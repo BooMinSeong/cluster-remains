@@ -10,10 +10,11 @@ MARK_END="# <<< sremain alias <<<"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--rc PATH] [--uninstall] [--no-wrapper]
+Usage: $(basename "$0") [--rc PATH] [--path PATH] [--uninstall] [--no-wrapper]
 
 Options:
   --rc PATH      Target rc file (default: ~/.bashrc)
+  --path PATH    Absolute path to sremain.sh to embed in alias
   --uninstall    Remove the sremain alias block and wrapper
   --no-wrapper   Do not create ~/.local/bin/sremain wrapper
 
@@ -24,9 +25,11 @@ EOF
 
 UNINSTALL=0
 NO_WRAPPER=0
+SREMAIN_PATH=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rc) shift; RC_FILE="${1:-}"; [[ -n "$RC_FILE" ]] || { echo "--rc requires a path" >&2; exit 1; }; shift ;;
+    --path) shift; SREMAIN_PATH="${1:-}"; [[ -n "$SREMAIN_PATH" ]] || { echo "--path requires a path" >&2; exit 1; }; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     --no-wrapper) NO_WRAPPER=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -35,9 +38,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-SREMAIN_PATH="${REPO_DIR}/sremain.sh"
+if [[ -z "$SREMAIN_PATH" ]]; then
+  SREMAIN_PATH="${REPO_DIR}/sremain.sh"
+fi
 
-if [[ ! -x "$SREMAIN_PATH" ]]; then
+if [[ ! -x "$SREMAIN_PATH" && -e "$SREMAIN_PATH" ]]; then
   echo "Making sremain.sh executable" >&2
   chmod +x "$SREMAIN_PATH"
 fi
@@ -76,7 +81,7 @@ cat >> "$RC_FILE" <<BLOCK
 ${MARK_BEGIN}
 # Added by cluster-remains/install.sh
 sremain() {
-  "${SREMAIN_PATH}" "$@"
+  "${SREMAIN_PATH}" "\$@"
 }
 ${MARK_END}
 BLOCK
@@ -91,7 +96,7 @@ if (( NO_WRAPPER == 0 )); then
   mkdir -p "$WRAP_DIR"
   cat > "$WRAP_PATH" <<WRAP
 #!/usr/bin/env bash
-exec "${SREMAIN_PATH}" "$@"
+exec "${SREMAIN_PATH}" "\$@"
 WRAP
   chmod +x "$WRAP_PATH"
   echo "Installed wrapper: $WRAP_PATH"
@@ -103,4 +108,3 @@ WRAP
 fi
 
 echo "Done. Test with: sremain --help or sremain -a"
-
