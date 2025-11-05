@@ -6,6 +6,8 @@ HEADER="\033[95m"
 OKGREEN="\033[92m"
 WARNING="\033[93m"
 FAIL="\033[91m"
+# Sky-blue for fully free GPU nodes when -a is set
+SKYBLUE="\033[96m"
 ENDC="\033[0m"
 
 ALL=0
@@ -284,7 +286,14 @@ print_node_table() {
     fi
 
     local color="$OKGREEN"
-    if (( rem_g == 0 )); then color="$FAIL"; elif (( rem_c == 0 )); then color="$WARNING"; fi
+    if (( rem_g == 0 )); then
+      color="$FAIL"
+    elif (( ALL )) && (( total_g > 0 )) && (( rem_g == total_g )); then
+      # Full GPUs available (e.g., 8/8 or 4/4) highlighted in sky-blue only with -a
+      color="$SKYBLUE"
+    elif (( rem_c == 0 )); then
+      color="$WARNING"
+    fi
 
     if (( ALL )); then
       # Build USERS summary
