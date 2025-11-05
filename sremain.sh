@@ -177,8 +177,10 @@ read_squeue() {
   if [[ -n "$SQUEUE_FILE" ]]; then
     squeue_lines=$(cat -- "$SQUEUE_FILE")
   else
-    squeue_lines=$(squeue -o "%6i %12j  %9T %12u %8g %15P %4D %20R %4C %40b %8m %11l %11L" || true)
+    # Removed group column (%g) to match sample.squeue layout
+    squeue_lines=$(squeue -o "%6i %12j  %9T %12u %15P %4D %20R %4C %40b %8m %11l %11L" || true)
   fi
+  # squeue -o   "%6i %12j  %9T %12u %15P %4D %20R %4C %40b %8m %11l %11L"
 
   # Skip header; parse from right to be robust
   local first=1
@@ -190,7 +192,8 @@ read_squeue() {
     local n=${#arr[@]}
     # Need at least 12-13 tokens based on default squeue
     if (( n < 12 )); then continue; fi
-    local user="${arr[n-10]}"
+    # With %g removed, shift user index one to the left
+    local user="${arr[n-9]}"
     local part="${arr[n-8]}"
     local nodelist="${arr[n-6]}"
     local cpus="${arr[n-5]}"
