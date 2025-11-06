@@ -17,8 +17,8 @@ Show remaining GPU and CPU capacity per GPU type (partition) and per node in a S
   - Reload shell: `source ~/.bashrc`
 
 Installer details:
-- Adds a small alias block to your rc (`~/.bashrc` by default) so you can run `sremain` from anywhere.
-- Also creates an optional wrapper at `~/.local/bin/sremain` if available.
+- Adds a small alias block to your rc (`~/.bashrc` by default) so you can run `sremain` and `scrime` from anywhere.
+- Also creates optional wrappers at `~/.local/bin/sremain` and `~/.local/bin/scrime` if available.
 - Uninstall: `./install.sh --uninstall`
 - Use a different rc file: `./install.sh --rc ~/.zshrc`
 
@@ -27,6 +27,9 @@ Manual alternative:
 # in your shell rc
 sremain() {
   "/path/to/cluster-remains/sremain.sh" "$@"
+}
+scrime() {
+  "/path/to/cluster-remains/scrime.sh" "$@"
 }
 ```
 
@@ -67,6 +70,22 @@ n2              2080ti          7/8             6/20
 If you pass `-f sample.squeue`, the tool expects a header like:
 `JOBID NAME STATE USER PARTITION NODE NODELIST(REASON) CPUS TRES_PER_NODE MIN_MEM TIME_LIMIT TIME_LEFT`.
 
+
+## scrime (per-user GPU usage)
+
+Summarize per-user running GPUs and queued GPUs with a ranked, colorized table.
+
+`scrime [-f|--file PATH] [-t|--threshold PCT] [-h|--help]`
+
+- `-f, --file PATH`  Read a saved `squeue` output (same format as `sremain`).
+- `-t, --threshold`  Percent of total running GPUs to flag as “CRIMINAL” (default: 10).
+
+Examples:
+```
+scrime
+scrime -f sample.squeue
+scrime -t 15
+```
 
 ## Notes
 - Tested against saved outputs (`sample.squeue`) and live Slurm on our cluster.
