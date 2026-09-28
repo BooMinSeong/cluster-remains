@@ -55,7 +55,7 @@ FS_WEIGHT=""          # PriorityWeightFairShare
 HALF=""               # PriorityDecayHalfLife as Slurm prints it
 HALF_SECS=0
 RECOVERY=(1 3 7 14 28 56)   # days ahead to project the fairshare factor to
-PROJ=()                     # "DAYS FACTOR RANK" per RECOVERY entry
+PROJ=()                     # "DAYS FACTOR AHEAD" per RECOVERY entry
 IDLE=0                      # other users with no usage, always ranked first
 VS_MEDIAN=""                # target's usage over the median user's with usage
 
@@ -184,10 +184,13 @@ read_assoc() {
       print "R", ahead + 1, peers
       if (half <= 0 || my_shares <= 0 || my_use + rate <= 0) exit
 
+      # The factor counts every user; the rank counts only active users
+      # ahead, i.e. leaves out the idle ones, who all rank first
       n = split(days, d, " ")
       for (i = 1; i <= n; i++) {
         r = rank_at(d[i] * 86400)
-        printf "P %s %.2f %d\n", d[i], (peers - r + 1) / peers, r
+        a = my_use > 0 ? r - 1 - idle : 0
+        printf "P %s %.2f %d\n", d[i], (peers - r + 1) / peers, a < 0 ? 0 : a
       }
     }')
 }
@@ -240,6 +243,15 @@ factor_prio() {
   fi
 }
 
+# Active users ahead as N/ACTIVE into REPLY, N green under a third of them,
+# yellow under two thirds, red beyond
+ahead_cell() {
+  local c=$C_GREEN
+  if (( $1 * 3 >= ACTIVE * 2 )); then c=$C_RED
+  elif (( $1 * 3 >= ACTIVE )); then c=$C_YELLOW; fi
+  REPLY="$c$1$C_END$C_DIM/$ACTIVE$C_END"
+}
+
 # One line: priority now, how many active users are ahead, usage against the
 # median user, and priority in a week if nothing new starts. The priority is
 # green, yellow or red by how close it is to the best anyone with usage can
@@ -266,10 +278,8 @@ print_priority() {
     stats+=("fairshare $c$now$e")
   fi
   if (( ACTIVE )); then
-    c=$C_GREEN
-    if (( AHEAD * 3 >= ACTIVE * 2 )); then c=$C_RED
-    elif (( AHEAD * 3 >= ACTIVE )); then c=$C_YELLOW; fi
-    stats+=("$c$AHEAD$e$d/$ACTIVE$e active users ahead")
+    ahead_cell "$AHEAD"
+    stats+=("$REPLY active users ahead")
   fi
   if [[ -n $VS_MEDIAN ]]; then
     local x="×"
@@ -523,8 +533,8 @@ print_recovery() {
   echo
   print_title "Recovery" "${stats[@]}"
 
-  tbl_new lrrrl "in" "factor" "rank" "priority" ""
-  row_recovery "now" "$FACTOR" "$RANK"
+  tbl_new lrrrl "in" "factor" "ahead" "priority" ""
+  row_recovery "now" "$FACTOR" "$AHEAD"
   local days factor rank when
   for days in "${PROJ[@]}"; do
     read -r days factor rank <<< "$days"
@@ -541,11 +551,12 @@ print_recovery() {
   tbl_print
 }
 
-# One row of the recovery table: when, factor, rank
+# One row of the recovery table: when, factor, active users ahead
 row_recovery() {
-  local prio="$C_DIM$G_NONE$C_END"
+  local prio="$C_DIM$G_NONE$C_END" ahead="$C_DIM$G_NONE$C_END"
   if [[ $FS_WEIGHT =~ ^[0-9]+$ ]]; then factor_prio "$2"; prio=$REPLY; fi
-  tbl_row "$1" "$2" "$3$C_DIM/$PEERS$C_END" "$prio" ""
+  if (( ACTIVE )); then ahead_cell "$3"; ahead=$REPLY; fi
+  tbl_row "$1" "$2" "$ahead" "$prio" ""
 }
 
 init_style

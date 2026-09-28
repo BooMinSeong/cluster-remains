@@ -176,14 +176,15 @@ A100-80GB         609     108      66k  30.1%  ██████
 cpu               12k     0.6     7.4k   3.4%  █
 
 Recovery · if you start nothing new · running jobs count until they end · best 0.31, as 421 users with no usage rank first
-in       factor     rank  priority
+in       factor    ahead  priority
 ──────────────────────────────────
-now        0.05  575/607       500
-1 day      0.05  575/607       500
-1 week     0.06  571/607       600
-2 weeks    0.09  553/607       900
-4 weeks    0.13  527/607      1300
-8 weeks    0.19  494/607      1900
+now        0.05  153/171       500
+1 day      0.05  154/171       500
+3 days     0.05  157/171       500
+1 week     0.06  149/171       600
+2 weeks    0.09  131/171       900
+4 weeks    0.14  103/171      1400
+8 weeks    0.18   76/171      1800
 ```
 
 Jobs:
