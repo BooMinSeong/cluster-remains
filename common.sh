@@ -1,4 +1,4 @@
-# Shared by sremain.sh and scrime.sh so both read Slurm the same way and
+# Shared by sremain.sh, scrime.sh and smine.sh so they read Slurm the same way and
 # print in the same style:
 #   - a bold title line with the totals, then a table
 #   - one row per thing, every value in its own aligned column

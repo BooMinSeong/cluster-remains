@@ -17,8 +17,8 @@ Show remaining GPU and CPU capacity per GPU type (partition) and per node in a S
   - Reload shell: `source ~/.bashrc`
 
 Installer details:
-- Adds a small alias block to your rc (`~/.bashrc` by default) so you can run `sremain` and `scrime` from anywhere.
-- Also creates optional wrappers at `~/.local/bin/sremain` and `~/.local/bin/scrime` if available.
+- Adds a small alias block to your rc (`~/.bashrc` by default) so you can run `sremain`, `scrime` and `smine` from anywhere.
+- Also creates optional wrappers at `~/.local/bin/sremain`, `~/.local/bin/scrime` and `~/.local/bin/smine` if available.
 - Uninstall: `./install.sh --uninstall`
 - Use a different rc file: `./install.sh --rc ~/.zshrc`
 
@@ -31,11 +31,14 @@ sremain() {
 scrime() {
   "/path/to/cluster-remains/scrime.sh" "$@"
 }
+smine() {
+  "/path/to/cluster-remains/smine.sh" "$@"
+}
 ```
 
 ## Output style
 
-`sremain` answers "where can I run?" and `scrime` answers "who is using the GPUs?". Both print the same way:
+`sremain` answers "where can I run?", `scrime` answers "who is using the GPUs?" and `smine` answers "how are my jobs doing?". All print the same way:
 
 - A bold title line with the totals, then one table (header, rule, rows).
 - One row per thing, with every value in its own aligned column.
@@ -43,7 +46,7 @@ scrime() {
 - Each color means one thing: green = free now, yellow = queued, red = over the limit, bold = group heading, dim = nothing there or secondary.
 - GPU types are the GPU partitions, in `sinfo` order. The `queue` column counts the GPUs that queued jobs ask for, in both tools.
 
-Shared parsing and drawing live in `common.sh`, which must stay next to `sremain.sh` and `scrime.sh`.
+Shared parsing and drawing live in `common.sh`, which must stay next to the scripts.
 
 ## sremain (free GPUs)
 
@@ -137,6 +140,43 @@ GPU usage · 456 of 621 running · 102 queued · 32 users · limit 10% = 46
 - `main` is the GPU type a user runs the most GPUs on, with that count. `more` counts the other types they run on.
 - Users at or over the threshold are red and flagged `CRIMINAL`. Users queuing more than 50 GPUs are flagged `WTF`.
 - Users with only queued GPUs are listed at the bottom, with the type they queue the most on.
+
+## smine (my jobs and fairshare)
+
+`smine [-u|--user USER] [--ascii] [-h|--help]`
+
+- `-u, --user USER`  Show USER instead of you.
+- `--ascii`  Draw with ASCII only. This is the default when the locale isn't UTF-8.
+
+Sample output:
+```
+My jobs · dkim011006 · 4 running (12 GPUs) · 2 queued (4 GPUs) · GPU limit 64
+     id  name     state    type           gpus  cpus    ran   left  node / why queued
+───────────────────────────────────────────────────────────────────────────────────────────────────
+1027741  h200x4   running  H200-ZT           4    32    40m  2d23h  n90
+1027742  a80x4    running  A100-80GB         4    32  5h52m  2d18h  n59
+1027743  h200x2a  queued   H200       +1     2    16      ·      ·  Priority  jobs with higher priority are ahead
+                                                                    est. start 09-29 05:50
+
+Fairshare · dkim011006 · factor 0.05 · rank 575 of 607 · priority +500 of 10000 · half-life 7 days
+type            hours  weight  billing  share
+──────────────────────────────────────────────────────────
+H200              550     220     121k  55.3%  ███████████
+A100-80GB         609     108      66k  30.1%  ██████
+4A100             378      60      23k  10.4%  ██
+cpu               12k     0.6     7.4k   3.4%  █
+```
+
+Jobs:
+- Running jobs first, then queued ones. `type` is the first partition the job may run in, with `+N` more. `left` is red under an hour.
+- Queued jobs show Slurm's reason and what it means, and Slurm's estimated start when it has one in the future. Reasons that won't clear on their own (a failed dependency, a held job, a request over a limit) are red.
+- An array job counts as its number of queued tasks in the title. Long ids and names are cut with `…`.
+- `GPU limit` is your association's GPU limit (`GrpTRES gres/gpu`), red when you are at it.
+
+Fairshare:
+- Read from `scontrol show assoc_mgr`, since `sshare` and `sacctmgr` may be off-limits to users.
+- `hours` are the GPU hours (CPU hours for `cpu`) you used on each GPU type, decayed by the half-life. `weight` is the partition's billing weight per GPU (`TRESBillingWeights`), and `billing` is hours times weight. `share` is each row's part of your billing.
+- Priority here comes almost only from fairshare (`PriorityWeightFairShare`), so the rows with the biggest share are what lower your priority the most. `rank` is your place among the users of your account by fairshare factor, 1 being the highest.
 
 ## Parsing notes
 
