@@ -141,15 +141,21 @@ GPU usage · 456 of 621 running · 102 queued · 32 users · limit 10% = 46
 - Users at or over the threshold are red and flagged `CRIMINAL`. Users queuing more than 50 GPUs are flagged `WTF`.
 - Users with only queued GPUs are listed at the bottom, with the type they queue the most on.
 
-## smine (my jobs and fairshare)
+## smine (my priority and jobs)
 
-`smine [-u|--user USER] [--ascii] [-h|--help]`
+`smine [-u|--user USER] [-a|--all] [--ascii] [-h|--help]`
+
+The first line is your priority from fairshare out of its weight, how many of the other active users of your account rank ahead of you (active means any decayed usage; users with none are left out since they don't compete), your decayed usage against the median user with any usage, and your priority in a week if you start nothing new. Your jobs follow.
+
+Colors on the first line: the priority is green, yellow or red by how close it is to the best reachable (users with no usage always rank first, so nobody with usage reaches the full weight); usage is green at or below the median, yellow up to twice it, red beyond; the week ahead is green if the priority rises.
 
 - `-u, --user USER`  Show USER instead of you.
+- `-a, --all`  Also show usage by GPU type and how your priority recovers over the next weeks.
 - `--ascii`  Draw with ASCII only. This is the default when the locale isn't UTF-8.
 
 Sample output:
 ```
+Priority · dkim011006 · 500/10000 · 153/171 active users ahead · usage 31× median user · 600 in 1 week
 My jobs · dkim011006 · 4 running (12 GPUs) · 2 queued (4 GPUs) · GPU limit 64
      id  name     state    type           gpus  cpus    ran   left  prio  node / why queued
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -157,8 +163,11 @@ My jobs · dkim011006 · 4 running (12 GPUs) · 2 queued (4 GPUs) · GPU limit 6
 1027742  a80x4    running  A100-80GB         4    32  5h52m  2d18h     ·  n59
 1027743  h200x2a  queued   H200       +1     2    16      ·      ·   542  Priority  jobs with higher priority are ahead
                                                                           est. start 09-29 05:50
+```
 
-Fairshare · dkim011006 · factor 0.05 · rank 575 of 607 · priority +500 of 10000 · half-life 7 days
+With `-a`:
+```
+Fairshare · dkim011006 · factor 0.05 · half-life 7 days
 type            hours  weight  billing  share
 ──────────────────────────────────────────────────────────
 H200              550     220     121k  55.3%  ███████████

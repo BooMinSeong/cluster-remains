@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Show my jobs and my fairshare: each running job with where it runs and the
-# time it has left, each queued job with why it waits in plain words, then
-# how much of each GPU type I have used and what that costs my priority.
+# Show my priority and my jobs: first my fairshare priority, how my usage
+# compares with other users and where it heads, then each running job with
+# where it runs and the time it has left, and each queued job with why it
+# waits in plain words. With -a, also how much of each GPU type I have used
+# and how my priority comes back if I start nothing new.
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/common.sh"
 
@@ -11,29 +13,23 @@ TARGET=${USER:-$(id -un)}   # whose jobs and fairshare to show
 NAME_MAX=20                 # cut job names longer than this
 ID_MAX=18                   # cut job ids (array task lists) longer than this
 BAR=20                      # width of a 100% share bar
+FAIRSHARE=0                 # 1 with -a: show usage by GPU type and recovery
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [-u|--user USER] [--ascii]
+Usage: $(basename "$0") [-u|--user USER] [-a|--all] [--ascii]
 
-Show your jobs and your fairshare.
+Show your priority and your jobs.
 
 Options:
   -u, --user USER  Show USER instead of you
+  -a, --all        Also show usage by GPU type and how your priority recovers
       --ascii      Draw with ASCII only (default: Unicode on UTF-8 locales)
   -h, --help       Show this help
 
-Queued jobs show why they wait, in plain words, and Slurm's estimated start
-if it has one. prio is the job's priority as a whole number, the same one
-sprio shows; squeue's PRIORITY (%p) is this number divided by 2^32. Fairshare shows the GPU hours you used per GPU type, decayed
-by the half-life, times the partition's billing weight. Your priority comes
-almost only from fairshare, so the types with the biggest share cost you the
-most.
-
-Recovery projects your fairshare factor if you start nothing new: your usage
-decays by the half-life and your running jobs add to it until they end,
-while everyone else's usage is held where it is now. Users with no usage
-always rank first, which caps the factor anyone with usage can reach.
+First line: priority/weight, active users (with any usage) ranked ahead of
+you, your usage vs. the median active user, and priority in a week if you
+start nothing new. prio is a queued job's priority, as sprio shows it.
 EOF
 }
 
@@ -42,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     -u|--user)
       [[ $# -ge 2 ]] || die "$1 requires a user"
       TARGET="$2"; shift 2 ;;
+    -a|--all) FAIRSHARE=1; shift ;;
     --ascii) ASCII=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
@@ -51,6 +48,7 @@ done
 # --- association: GPU limit, fairshare, usage ---------------------------------
 
 ACCOUNT="" FACTOR="" RANK=0 PEERS=0
+ACTIVE=0 AHEAD=0     # other users with usage, and how many of them rank ahead
 GPU_LIMIT="" GPU_USED=0
 declare -A USAGE=()   # TRES (cpu, billing, gres/gpu:TYPE) -> decayed minutes
 FS_WEIGHT=""          # PriorityWeightFairShare
@@ -59,6 +57,7 @@ HALF_SECS=0
 RECOVERY=(1 3 7 14 28 56)   # days ahead to project the fairshare factor to
 PROJ=()                     # "DAYS FACTOR RANK" per RECOVERY entry
 IDLE=0                      # other users with no usage, always ranked first
+VS_MEDIAN=""                # target's usage over the median user's with usage
 
 read_config() {
   local key _ value
@@ -91,8 +90,10 @@ read_assoc() {
       L) GPU_LIMIT=$a GPU_USED=$b ;;
       U) USAGE[$a]=$b ;;
       R) RANK=$a PEERS=$b ;;
+      S) AHEAD=$a ACTIVE=$b ;;
       P) PROJ+=("$a $b $c") ;;
       I) IDLE=$a ;;
+      M) VS_MEDIAN=$a ;;
     esac
   done < <(scontrol show assoc_mgr flags=assoc 2>/dev/null |
            awk -v me="$TARGET" -v half="$HALF_SECS" -v days="${RECOVERY[*]}" '
@@ -168,8 +169,18 @@ read_assoc() {
         if (fac[k] + 0 > my_fac + 0) ahead++
         key[p[2]] = share[k] > 0 ? usage[k] / share[k] : 1e300
         if (p[2] != me && key[p[2]] == 0) idle++
+        if (p[2] != me && key[p[2]] > 0 && key[p[2]] < 1e300) used[++nused] = key[p[2]]
       }
+      # Only users with usage compete: rank among them by usage per share
+      mine_key = my_shares > 0 ? my_use / my_shares : 1e300
+      for (i = 1; i <= nused; i++) if (used[i] < mine_key) sahead++
+      print "S", sahead + 0, nused + 0
       print "I", idle + 0
+      if (nused && my_shares > 0) {
+        asort(used)
+        med = nused % 2 ? used[(nused + 1) / 2] : (used[nused / 2] + used[nused / 2 + 1]) / 2
+        if (med > 0) printf "M %.4f\n", my_use / my_shares / med
+      }
       print "R", ahead + 1, peers
       if (half <= 0 || my_shares <= 0 || my_use + rate <= 0) exit
 
@@ -216,6 +227,64 @@ read_weights() {
     LABEL[$key]=$part
     if [[ -z $CPU_WEIGHT ]]; then CPU_WEIGHT=${cweight[$part]:-}; fi
   done < <(sinfo -h -o "%P %G" 2>/dev/null)
+}
+
+# --- priority -----------------------------------------------------------------
+
+# Priority from a fairshare factor, into REPLY; the factor itself if the
+# fairshare weight is unknown
+factor_prio() {
+  REPLY=$1
+  if [[ $FS_WEIGHT =~ ^[0-9]+$ ]]; then
+    REPLY=$(awk -v f="$1" -v w="$FS_WEIGHT" 'BEGIN { printf "%.0f", f * w }')
+  fi
+}
+
+# One line: priority now, how many active users are ahead, usage against the
+# median user, and priority in a week if nothing new starts. The priority is
+# green, yellow or red by how close it is to the best anyone with usage can
+# reach (users with no usage always rank first); usage is green at or below
+# the median, yellow up to twice it and red beyond; the week is green if it
+# rises.
+print_priority() {
+  local d=$C_DIM e=$C_END
+  if [[ -z $FACTOR ]]; then
+    print_title "Priority" "$TARGET" "${d}no fairshare association$e"
+    return
+  fi
+  local stats=("$TARGET") c
+  c=$(awk -v f="$FACTOR" -v n="$PEERS" -v i="$IDLE" 'BEGIN {
+    best = n > i ? (n - i) / n : 1
+    print f < best / 3 ? "r" : f < best * 2 / 3 ? "y" : "g" }')
+  case $c in r) c=$C_RED ;; y) c=$C_YELLOW ;; *) c=$C_GREEN ;; esac
+  factor_prio "$FACTOR"
+  local now=$REPLY
+  if [[ $FS_WEIGHT =~ ^[0-9]+$ ]]; then
+    stats+=("$c$now$e$d/$FS_WEIGHT$e")
+  else
+    stats+=("fairshare $c$now$e")
+  fi
+  if (( ACTIVE )); then
+    stats+=("$AHEAD$d/$ACTIVE$e active users ahead")
+  fi
+  if [[ -n $VS_MEDIAN ]]; then
+    local x="×"
+    if [[ $G_NONE != "·" ]]; then x="x"; fi
+    c=$(awk -v r="$VS_MEDIAN" 'BEGIN { print r <= 1 ? "g" : r <= 2 ? "y" : "r" }')
+    case $c in r) c=$C_RED ;; y) c=$C_YELLOW ;; *) c=$C_GREEN ;; esac
+    stats+=("usage $c$(awk -v r="$VS_MEDIAN" 'BEGIN { printf (r >= 10 ? "%.0f" : "%.1f"), r }')$x$e median user")
+  fi
+  local p days factor rank
+  for p in "${PROJ[@]}"; do
+    read -r days factor rank <<< "$p"
+    if (( days == 7 )); then
+      factor_prio "$factor"
+      c=$d
+      if awk -v a="$REPLY" -v b="$now" 'BEGIN { exit !(a > b) }'; then c=$C_GREEN; fi
+      stats+=("$c$REPLY in 1 week$e")
+    fi
+  done
+  print_title "Priority" "${stats[@]}"
 }
 
 # --- jobs ---------------------------------------------------------------------
@@ -384,7 +453,7 @@ short_num() {
 
 print_fairshare() {
   local d=$C_DIM e=$C_END
-  local weight=$FS_WEIGHT half=$HALF
+  local half=$HALF
   if [[ $half =~ ^([0-9]+)-00:00:00$ ]]; then half="${BASH_REMATCH[1]} days"; fi
 
   if [[ -z $FACTOR ]]; then
@@ -393,10 +462,6 @@ print_fairshare() {
     return
   fi
   local stats=("$TARGET" "factor $FACTOR")
-  if (( PEERS )); then stats+=("rank $RANK of $PEERS"); fi
-  if [[ $weight =~ ^[0-9]+$ ]]; then
-    stats+=("priority +$(awk -v f="$FACTOR" -v w="$weight" 'BEGIN { printf "%.0f", f * w }') of $weight")
-  fi
   if [[ -n $half ]]; then stats+=("half-life $half"); fi
   print_title "Fairshare" "${stats[@]}"
 
@@ -475,9 +540,7 @@ print_recovery() {
 # One row of the recovery table: when, factor, rank
 row_recovery() {
   local prio="$C_DIM$G_NONE$C_END"
-  if [[ $FS_WEIGHT =~ ^[0-9]+$ ]]; then
-    prio=$(awk -v f="$2" -v w="$FS_WEIGHT" 'BEGIN { printf "%.0f", f * w }')
-  fi
+  if [[ $FS_WEIGHT =~ ^[0-9]+$ ]]; then factor_prio "$2"; prio=$REPLY; fi
   tbl_row "$1" "$2" "$3$C_DIM/$PEERS$C_END" "$prio" ""
 }
 
@@ -485,6 +548,9 @@ init_style
 read_config
 read_assoc
 read_weights
+print_priority
 print_jobs
-echo
-print_fairshare
+if (( FAIRSHARE )); then
+  echo
+  print_fairshare
+fi

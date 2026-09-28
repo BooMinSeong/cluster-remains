@@ -190,14 +190,16 @@ print_title() {
   local title=$1; shift
   local item line=""
   for item in "$@"; do line+="$G_SEP$item"; done
-  if (( TERM_COLS == 0 || ${#title} + ${#line} <= TERM_COLS )); then
+  vis_len "$line"
+  if (( TERM_COLS == 0 || ${#title} + REPLY <= TERM_COLS )); then
     printf '%s%s%s%s\n' "$C_BOLD" "$title" "$C_END" "$line"
     return
   fi
   printf '%s%s%s\n' "$C_BOLD" "$title" "$C_END"
   line=""
   for item in "$@"; do
-    if [[ -n $line ]] && (( ${#line} + ${#G_SEP} + ${#item} > TERM_COLS )); then
+    vis_len "$line$G_SEP$item"
+    if [[ -n $line ]] && (( REPLY > TERM_COLS )); then
       printf '%s\n' "$line"
       line=""
     fi
