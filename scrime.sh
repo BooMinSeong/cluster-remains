@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Show who is using the GPUs: per user, running and queued GPUs, their share
-# of all running GPUs, and which GPU types they are on.
+# of all running GPUs, and the GPU type they use most.
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/common.sh"
 
@@ -23,8 +23,9 @@ Options:
       --ascii        Draw with ASCII only (default: Unicode on UTF-8 locales)
   -h, --help         Show this help
 
-type:gpus lists the GPU types a user runs on, e.g. A6000:8+4 is 8 running
-and 4 more queued. Users queuing more than $WTF GPUs are flagged WTF.
+main is the GPU type a user runs the most GPUs on, with that count; more
+counts the other types they run on. Users queuing more than $WTF GPUs are
+flagged WTF.
 EOF
 }
 
@@ -69,18 +70,21 @@ read_jobs() {
   done < <(job_lines)
 }
 
-# Each user's GPU types as items like A6000:8+4 (queued part in yellow),
-# most running first. Fills TYPES_OF.
-declare -A TYPES_OF=()
+# Each user's main GPU type: the one they run the most GPUs on, or for
+# users with only queued GPUs, the one they queue the most on. Fills
+# MAIN_TYPE, MAIN_RUN and MAIN_QUEUE with it and OTHER_TYPES with how many
+# other types a user runs on.
+declare -A MAIN_TYPE=() MAIN_RUN=() MAIN_QUEUE=() OTHER_TYPES=()
 
-list_types() {
-  local user run queue type item key
+find_main_types() {
+  local user run queue type key
   local -A seen=()
   while read -r user run queue type; do
-    item="$type:"
-    if (( run > 0 )); then item+=$run; fi
-    if (( queue > 0 )); then item+="$C_YELLOW+$queue$C_END"; fi
-    TYPES_OF[$user]+="${TYPES_OF[$user]:+$ITEM}$item"
+    if [[ -z ${MAIN_TYPE[$user]:-} ]]; then
+      MAIN_TYPE[$user]=$type MAIN_RUN[$user]=$run MAIN_QUEUE[$user]=$queue
+    elif (( run > 0 )); then
+      add OTHER_TYPES "$user" 1
+    fi
   done < <(for key in "${!RUN_ON[@]}" "${!QUEUE_ON[@]}"; do
              if [[ -n ${seen[$key]:-} ]]; then continue; fi
              seen[$key]=1
@@ -112,8 +116,8 @@ print_report() {
   print_title "GPU usage" "${stats[@]}"
 
   local d=$C_DIM e=$C_END none="$C_DIM$G_NONE$C_END"
-  tbl_new rlrrrll "#" "user" "gpus" "queue" "share" "" "type:gpus"
-  local rank name gpus qcell share flags tenths
+  tbl_new rlrrrlrll "#" "user" "gpus" "queue" "share" "main" "" "more" ""
+  local rank name gpus qcell share flags tenths count more other
   for i in "${!users[@]}"; do
     user=${users[i]} run=${RUN[${users[i]}]:-0} queue=${QUEUE[${users[i]}]:-0}
     if (( i == nrun )); then tbl_note 1 "${d}queued only$e"; fi
@@ -128,7 +132,12 @@ print_report() {
       name="$C_RED$user$e" flags="${C_RED}CRIMINAL$e"
     fi
     if (( queue > WTF )); then flags+="${flags:+ }${C_YELLOW}WTF$e"; fi
-    tbl_row "$rank" "$name" "$gpus" "$qcell" "$share" "$flags" "${TYPES_OF[$user]:-}"
+    count=${MAIN_RUN[$user]}
+    if (( count == 0 )); then count="$C_YELLOW+${MAIN_QUEUE[$user]}$e"; fi
+    other=${OTHER_TYPES[$user]:-0} more=""
+    if (( other == 1 )); then more="$d+1 type$e"; fi
+    if (( other > 1 )); then more="$d+$other types$e"; fi
+    tbl_row "$rank" "$name" "$gpus" "$qcell" "$share" "${MAIN_TYPE[$user]}" "$count" "$more" "$flags"
   done
   tbl_print
 }
@@ -136,5 +145,5 @@ print_report() {
 init_style
 load_nodes
 read_jobs
-list_types
+find_main_types
 print_report

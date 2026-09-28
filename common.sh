@@ -1,11 +1,11 @@
 # Shared by sremain.sh and scrime.sh so both read Slurm the same way and
 # print in the same style:
 #   - a bold title line with the totals, then a table
+#   - one row per thing, every value in its own aligned column
 #   - numbers right-aligned, "·" for nothing, free/total with the "/" lined up
-#   - the last column lists label:count items, largest first, and wraps
-#     under itself when the terminal is narrow
 #   - each color means one thing: green = free now, yellow = queued,
-#     red = over the limit, dim = nothing there or secondary
+#     red = over the limit, bold = group heading, dim = nothing there or
+#     secondary
 # Source it first, then call init_style once options are parsed.
 
 shopt -s extglob
@@ -73,20 +73,6 @@ expand_nodes() {
       EXPANDED+=("n$p")
     fi
   done
-}
-
-# Compress node names, sorted by number, into REPLY like n[1,4-5]
-compress_nodes() {
-  if (( $# == 1 )); then REPLY=$1; return; fi
-  local -a nums=("${@#n}")
-  local out="" s=${nums[0]} p=${nums[0]} x
-  for x in "${nums[@]:1}" -1; do
-    if (( x == p + 1 )); then p=$x; continue; fi
-    out+=",$s"
-    if (( p > s )); then out+="-$p"; fi
-    s=$x; p=$x
-  done
-  REPLY="n[${out#,}]"
 }
 
 # GPUs per node from sinfo's GRES (gpu:MODEL:8), else from a feature like
@@ -198,12 +184,6 @@ vis_len() {
   REPLY=${#p}
 }
 
-# Join the arguments into one item list for a table's last column
-items_join() {
-  local IFS=$ITEM
-  REPLY="$*"
-}
-
 # Print the title in bold followed by the stats on one line if they fit,
 # otherwise the title alone and the stats packed onto as few lines as fit
 print_title() {
@@ -250,7 +230,7 @@ color_free() {
 # Tables: tbl_new ALIGN HEADER..., then tbl_row CELL... per row (one cell per
 # column) or tbl_note COLUMN TEXT for a line of text starting at a column,
 # then tbl_print. ALIGN has an l or r per column. Cells may contain color
-# codes. The last cell is a list of items (see items_join) that wraps
+# codes. The last cell is a list of items joined by $ITEM that wraps
 # between items, indented under its column, when the row is too wide for
 # the terminal. Columns that are empty in every row, header included, are
 # left out.
@@ -290,6 +270,7 @@ tbl_print() {
     if (( TBL_W[i] )); then TBL_PREFIX=$(( TBL_PREFIX + TBL_W[i] + GAP )); fi
   done
   local width=$(( TBL_PREFIX + TBL_W[n-1] ))
+  if (( TBL_W[n-1] == 0 )); then width=$(( width - GAP )); fi
   TBL_LAST=0
   if (( TERM_COLS > 0 && width > TERM_COLS )); then
     TBL_LAST=$(( TERM_COLS - TBL_PREFIX ))

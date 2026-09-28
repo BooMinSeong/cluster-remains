@@ -1,42 +1,56 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Show where GPUs are free: per GPU type, how many are free and on which
-# nodes. With -a, also every node and who is using it.
+# Show where GPUs are free: per GPU type, how many are free. For the GPU
+# types named on the command line, or all with -F, also each node with free
+# GPUs and how many CPUs are left there. With -a, every node and who is
+# using it.
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/common.sh"
 
-ALL=0
+FULL=0          # show nodes under their GPU type
+ALL=0           # show every node, and the users on it
+FILTERS=()      # GPU types to show
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [-a|--all] [-f|--file PATH] [--ascii]
+Usage: $(basename "$0") [-F|--full] [-a|--all] [-f|--file PATH] [--ascii] [GPU...]
 
-Show free GPUs per GPU type and the nodes they are on.
+Show free GPUs per GPU type. Name GPU types, or use -F, to also see their
+nodes with the CPUs left beside the free GPUs.
+
+Arguments:
+  GPU              GPU type to show with its nodes, e.g. A6000. Case doesn't
+                   matter; a name matching no type exactly picks every type
+                   containing it (a100 -> all A100 types).
 
 Options:
-  -a, --all        Also list every node with the users on it
+  -F, --full       Show the nodes of every GPU type
+  -a, --all        Show every node, not just those with free GPUs, and the
+                   users on it (implies -F if no GPU is named)
   -f, --file PATH  Read squeue output from a file (offline mode); sinfo is
                    read from $SINFO_SNAPSHOT next to it or in the current
                    directory if there is one
       --ascii      Draw with ASCII only (default: Unicode on UTF-8 locales)
   -h, --help       Show this help
 
-node:free lists nodes by how many GPUs they have free, e.g. n[4-5]:8.
-GPUs on a node with no free CPU can't be used, so they aren't counted as
-free and are listed last, after "no CPU:".
+cpus/gpu is a node's free CPUs per free GPU. A job needs CPUs too, so free
+GPUs on a node with few CPUs left may not be usable. Nodes with no free CPU
+are dimmed.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -a|--all) ALL=1; shift ;;
+    -F|--full) FULL=1; shift ;;
+    -a|--all) ALL=1; FULL=1; shift ;;
     -f|--file)
       [[ $# -ge 2 ]] || die "$1 requires a path"
       SQUEUE_FILE="$2"; shift 2 ;;
     --ascii) ASCII=1; shift ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *) FILTERS+=("$1"); shift ;;
   esac
 done
 
@@ -66,125 +80,135 @@ read_jobs() {
   done < <(job_lines)
 }
 
-# Free GPUs and CPUs per node. A node's free GPUs are usable only if it
-# has a free CPU too; the rest are stranded.
+# Free GPUs and CPUs per node and per GPU type
 declare -A FREE=() CPU_FREE=()
-STRANDED=0
+declare -A T_FREE=() T_GPUS=() T_CPU_FREE=() T_CPUS=()
 
 count_free() {
-  local n f
+  local n t f
   for n in "${NODES[@]}"; do
     f=$(( NODE_GPUS[$n] - ${USED_GPUS[$n]:-0} ))
     FREE[$n]=$(( f > 0 ? f : 0 ))
     f=$(( NODE_CPUS[$n] - ${USED_CPUS[$n]:-0} ))
     CPU_FREE[$n]=$(( f > 0 ? f : 0 ))
-    if (( CPU_FREE[$n] == 0 )); then STRANDED=$(( STRANDED + FREE[$n] )); fi
+    t=${NODE_TYPE[$n]}
+    add T_FREE "$t" "${FREE[$n]}"
+    add T_GPUS "$t" "${NODE_GPUS[$n]}"
+    add T_CPU_FREE "$t" "${CPU_FREE[$n]}"
+    add T_CPUS "$t" "${NODE_CPUS[$n]}"
   done
 }
 
-# Per GPU type: free/total GPUs and CPUs, queued GPUs, and its nodes grouped
-# by free GPUs, most first. Fills the T_* arrays in TYPES order.
-T_FREE=() T_GPUS=() T_CPU_FREE=() T_CPUS=() T_ITEMS=()
+# Users on each node as items like user:gpus/cpus, most GPUs first, CPU-only
+# users dimmed. Fills USERS_ON.
+declare -A USERS_ON=()
 
-sum_types() {
-  local -A free=() gpus=() cpu_free=() cpus=() most=() groups=() stranded=()
-  local t n f key
-  for n in "${NODES[@]}"; do
-    t=${NODE_TYPE[$n]} f=${FREE[$n]}
-    add gpus "$t" "${NODE_GPUS[$n]}"
-    add cpus "$t" "${NODE_CPUS[$n]}"
-    add cpu_free "$t" "${CPU_FREE[$n]}"
-    if (( f == 0 )); then continue; fi
-    if (( f > ${most[$t]:-0} )); then most[$t]=$f; fi
-    if (( CPU_FREE[$n] == 0 )); then stranded["$t $f"]+=" $n"; continue; fi
-    add free "$t" "$f"
-    groups["$t $f"]+=" $n"
-  done
-
-  local -a items no_cpu
-  for t in "${TYPES[@]}"; do
-    items=() no_cpu=()
-    for (( f=${most[$t]:-0}; f>0; f-- )); do
-      key="$t $f"
-      if [[ -n ${groups[$key]:-} ]]; then
-        # shellcheck disable=SC2086
-        compress_nodes ${groups[$key]}
-        items+=("$REPLY:$f")
-      fi
-      if [[ -n ${stranded[$key]:-} ]]; then
-        # shellcheck disable=SC2086
-        compress_nodes ${stranded[$key]}
-        no_cpu+=("$REPLY:$f")
-      fi
-    done
-    if (( ${#no_cpu[@]} )); then items+=("${C_DIM}no CPU: ${no_cpu[*]}$C_END"); fi
-    items_join "${items[@]}"
-    T_ITEMS+=("$REPLY")
-    T_FREE+=("${free[$t]:-0}") T_GPUS+=("${gpus[$t]}")
-    T_CPU_FREE+=("${cpu_free[$t]}") T_CPUS+=("${cpus[$t]}")
-  done
-}
-
-# Queued GPUs as a cell: +N in yellow, or a dim dot
-queue_cell() {
-  if (( $1 > 0 )); then REPLY="$C_YELLOW+$1$C_END"; else REPLY="$C_DIM$G_NONE$C_END"; fi
-}
-
-print_types() {
-  local -a gcells ccells
-  fracs T_FREE T_GPUS; gcells=("${FRACS[@]}")
-  fracs T_CPU_FREE T_CPUS; ccells=("${FRACS[@]}")
-  tbl_new lrrrl "type" "free gpus" "queue" "free cpus" "node:free"
-  local i t g c q
-  for i in "${!TYPES[@]}"; do
-    t=${TYPES[i]} g=${gcells[i]} c=${ccells[i]}
-    queue_cell "${QUEUED[$t]:-0}"; q=$REPLY
-    if (( T_FREE[i] > 0 )); then
-      color_free "$g" "$C_GREEN"
-      tbl_row "$t" "$REPLY" "$q" "$c" "${T_ITEMS[i]}"
-    else
-      tbl_row "$C_DIM$t$C_END" "$C_DIM$g$C_END" "$q" "$C_DIM$c$C_END" "${T_ITEMS[i]}"
-    fi
-  done
-  tbl_print
-}
-
-print_nodes() {
-  # Users per node, most GPUs first; CPU-only users dimmed
-  local -A users=()
-  local n user g c
+list_users() {
+  local key n g c user
   while read -r n g c user; do
     if (( g > 0 )); then
-      users[$n]+="$ITEM$user:$g/$c"
+      USERS_ON[$n]+="${USERS_ON[$n]:+$ITEM}$user:$g/$c"
     else
-      users[$n]+="$ITEM$C_DIM$user:$g/$c$C_END"
+      USERS_ON[$n]+="${USERS_ON[$n]:+$ITEM}$C_DIM$user:$g/$c$C_END"
     fi
   done < <(for key in "${!USER_GPUS[@]}"; do
              printf '%s %s %s %s\n' "${key% *}" "${USER_GPUS[$key]}" "${USER_CPUS[$key]}" "${key#* }"
            done | sort -k2,2nr -k3,3nr -k4,4)
+}
 
-  local -a free=() gpus=() cpu_free=() cpus=() gcells ccells
-  for n in "${NODES[@]}"; do
-    free+=("${FREE[$n]}") gpus+=("${NODE_GPUS[$n]}")
-    cpu_free+=("${CPU_FREE[$n]}") cpus+=("${NODE_CPUS[$n]}")
+# The GPU types to show, in sinfo order: all, or those FILTERS name. A
+# filter matching a type exactly (ignoring case) picks just that type,
+# otherwise every type containing it. Sets SHOWN.
+pick_types() {
+  local f t match
+  local -A pick=()
+  SHOWN=()
+  if (( ${#FILTERS[@]} == 0 )); then SHOWN=("${TYPES[@]}"); return; fi
+  for f in "${FILTERS[@]}"; do
+    match=""
+    for t in "${TYPES[@]}"; do
+      if [[ ${t,,} == "${f,,}" ]]; then match=$t; fi
+    done
+    if [[ -n $match ]]; then pick[$match]=1; continue; fi
+    for t in "${TYPES[@]}"; do
+      if [[ ${t,,} == *"${f,,}"* ]]; then pick[$t]=1; match=$t; fi
+    done
+    [[ -n $match ]] || die "no GPU type matches '$f' (types: ${TYPES[*]})"
   done
+  for t in "${TYPES[@]}"; do
+    if [[ -n ${pick[$t]:-} ]]; then SHOWN+=("$t"); fi
+  done
+}
+
+# One table: a row per GPU type in SHOWN, each followed by its nodes with
+# free GPUs (every node with -a), most free GPUs first, if nodes are shown
+print_table() {
+  local -A nodes_of=()
+  local t f c n
+  while read -r t f c n; do
+    nodes_of[$t]+=" $n"
+  done < <(for n in "${NODES[@]}"; do
+             if (( FREE[$n] == 0 && ! ALL )); then continue; fi
+             printf '%s %s %s %s\n' "${NODE_TYPE[$n]}" "${FREE[$n]}" "${CPU_FREE[$n]}" "$n"
+           done | sort -k2,2nr -k3,3nr -k4,4V)
+
+  # Rows as parallel arrays; the fractions are formatted all at once so
+  # their slashes line up across type and node rows
+  local -a names=() free=() gpus=() cpu_free=() cpus=() is_type=()
+  for t in "${SHOWN[@]}"; do
+    names+=("$t") is_type+=(1)
+    free+=("${T_FREE[$t]}") gpus+=("${T_GPUS[$t]}")
+    cpu_free+=("${T_CPU_FREE[$t]}") cpus+=("${T_CPUS[$t]}")
+    if (( ! SHOW_NODES )); then continue; fi
+    for n in ${nodes_of[$t]:-}; do
+      names+=("$n") is_type+=(0)
+      free+=("${FREE[$n]}") gpus+=("${NODE_GPUS[$n]}")
+      cpu_free+=("${CPU_FREE[$n]}") cpus+=("${NODE_CPUS[$n]}")
+    done
+  done
+  local -a gcells ccells
   fracs free gpus; gcells=("${FRACS[@]}")
   fracs cpu_free cpus; ccells=("${FRACS[@]}")
 
-  tbl_new llrrl "node" "type" "free gpus" "free cpus" "user:gpus/cpus"
-  local i list
-  for i in "${!NODES[@]}"; do
-    n=${NODES[i]} list=${users[${NODES[i]}]:-}
-    list=${list#"$ITEM"}
+  local d=$C_DIM e=$C_END first="type" ratio_head="" users_head=""
+  if (( SHOW_NODES )); then first="type / node" ratio_head="cpus/gpu"; fi
+  if (( ALL )); then users_head="user:gpus/cpus"; fi
+  tbl_new lrrrrl "$first" "free gpus" "free cpus" "$ratio_head" "queue" "$users_head"
+  local i name g ratio tenths
+  for i in "${!names[@]}"; do
+    name=${names[i]} g=${gcells[i]} c=${ccells[i]}
+    if (( is_type[i] )); then
+      queue_cell "${QUEUED[$name]:-0}"
+      if (( free[i] > 0 )); then
+        color_free "$g" "$C_GREEN"
+        tbl_row "$C_BOLD$name$e" "$REPLY" "$c" "" "$QUEUE_CELL" ""
+      else
+        tbl_row "$d$name$e" "$d$g$e" "$d$c$e" "" "$QUEUE_CELL" ""
+      fi
+      continue
+    fi
+    ratio=""
+    if (( free[i] > 0 )); then
+      tenths=$(( (cpu_free[i] * 20 + free[i]) / (2 * free[i]) ))
+      ratio="$(( tenths / 10 )).$(( tenths % 10 ))"
+    fi
     if (( free[i] > 0 && cpu_free[i] > 0 )); then
-      color_free "${gcells[i]}" "$C_GREEN"
-      tbl_row "$n" "${NODE_TYPE[$n]}" "$REPLY" "${ccells[i]}" "$list"
+      color_free "$g" "$C_GREEN"
+      tbl_row "  $name" "$REPLY" "$c" "$ratio" "" "${USERS_ON[$name]:-}"
     else
-      tbl_row "$C_DIM$n$C_END" "$C_DIM${NODE_TYPE[$n]}$C_END" "$C_DIM${gcells[i]}$C_END" \
-        "$C_DIM${ccells[i]}$C_END" "$list"
+      tbl_row "  $d$name$e" "$d$g$e" "$d$c$e" "$d$ratio$e" "" "${USERS_ON[$name]:-}"
     fi
   done
   tbl_print
+}
+
+# Queued GPUs as a cell: +N in yellow, or a dim dot. Sets QUEUE_CELL.
+queue_cell() {
+  if (( $1 > 0 )); then
+    QUEUE_CELL="$C_YELLOW+$1$C_END"
+  else
+    QUEUE_CELL="$C_DIM$G_NONE$C_END"
+  fi
 }
 
 init_style
@@ -192,20 +216,18 @@ load_nodes
 (( ${#NODES[@]} )) || die "no GPU nodes found in sinfo"
 read_jobs
 count_free
-sum_types
+if (( ALL )); then list_users; fi
+pick_types
+SHOW_NODES=0
+if (( FULL || ${#FILTERS[@]} )); then SHOW_NODES=1; fi
 
 free=0 total=0 queued=0
-for i in "${!TYPES[@]}"; do
-  free=$(( free + T_FREE[i] )) total=$(( total + T_GPUS[i] ))
-  queued=$(( queued + ${QUEUED[${TYPES[i]}]:-0} ))
+for t in "${SHOWN[@]}"; do
+  free=$(( free + T_FREE[$t] )) total=$(( total + T_GPUS[$t] ))
+  queued=$(( queued + ${QUEUED[$t]:-0} ))
 done
 stats=("$free of $total free" "$queued queued")
-if (( STRANDED )); then stats+=("$STRANDED without a free CPU"); fi
 if (( NODES_OFF == 1 )); then stats+=("1 node down"); fi
 if (( NODES_OFF > 1 )); then stats+=("$NODES_OFF nodes down"); fi
 print_title "GPU availability" "${stats[@]}"
-print_types
-if (( ALL )); then
-  echo
-  print_nodes
-fi
+print_table
