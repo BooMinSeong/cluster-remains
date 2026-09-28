@@ -243,9 +243,10 @@ factor_prio() {
 # One line: priority now, how many active users are ahead, usage against the
 # median user, and priority in a week if nothing new starts. The priority is
 # green, yellow or red by how close it is to the best anyone with usage can
-# reach (users with no usage always rank first); usage is green at or below
-# the median, yellow up to twice it and red beyond; the week is green if it
-# rises.
+# reach (users with no usage always rank first); users ahead are green under
+# a third of the active users, yellow under two thirds, red beyond; usage is
+# green at or below the median, yellow up to twice it and red beyond; the
+# week is green if it rises.
 print_priority() {
   local d=$C_DIM e=$C_END
   if [[ -z $FACTOR ]]; then
@@ -265,7 +266,10 @@ print_priority() {
     stats+=("fairshare $c$now$e")
   fi
   if (( ACTIVE )); then
-    stats+=("$AHEAD$d/$ACTIVE$e active users ahead")
+    c=$C_GREEN
+    if (( AHEAD * 3 >= ACTIVE * 2 )); then c=$C_RED
+    elif (( AHEAD * 3 >= ACTIVE )); then c=$C_YELLOW; fi
+    stats+=("$c$AHEAD$e$d/$ACTIVE$e active users ahead")
   fi
   if [[ -n $VS_MEDIAN ]]; then
     local x="×"

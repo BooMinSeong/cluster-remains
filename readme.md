@@ -147,7 +147,7 @@ GPU usage · 456 of 621 running · 102 queued · 32 users · limit 10% = 46
 
 The first line is your priority from fairshare out of its weight, how many of the other active users of your account rank ahead of you (active means any decayed usage; users with none are left out since they don't compete), your decayed usage against the median user with any usage, and your priority in a week if you start nothing new. Your jobs follow.
 
-Colors on the first line: the priority is green, yellow or red by how close it is to the best reachable (users with no usage always rank first, so nobody with usage reaches the full weight); usage is green at or below the median, yellow up to twice it, red beyond; the week ahead is green if the priority rises.
+Colors on the first line: the priority is green, yellow or red by how close it is to the best reachable (users with no usage always rank first, so nobody with usage reaches the full weight); users ahead are green under a third of the active users, yellow under two thirds, red beyond; usage is green at or below the median, yellow up to twice it, red beyond; the week ahead is green if the priority rises.
 
 - `-u, --user USER`  Show USER instead of you.
 - `-a, --all`  Also show usage by GPU type and how your priority recovers over the next weeks.
