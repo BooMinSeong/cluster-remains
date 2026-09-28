@@ -33,53 +33,61 @@ scrime() {
 }
 ```
 
-## Usage
+## Output style
 
-`sremain [-a|--all] [-f|--file PATH] [-h|--help]`
+`sremain` answers "where can I run?" and `scrime` answers "who is using the GPUs?". Both print the same way:
 
-- `-a, --all`  Show all nodes and include a USERS(G, C) summary per node.
-- `-f, --file PATH`  Read `squeue` output from a file for offline testing. When set, the tool also looks for `20251105.sinfo` (in the same directory or the current directory) for node/partition layout. If not found, it falls back to live `sinfo`.
+- A bold title line with the totals, then one table (header, rule, rows).
+- Numbers are right-aligned, `·` means none, and `free/total` cells line up on the `/`.
+- The last column lists `label:count` items, largest first. It wraps under itself when the terminal is narrow.
+- Each color means one thing: green = free now, yellow = queued, red = over the limit, dim = nothing there or secondary.
+- GPU types are the GPU partitions, in `sinfo` order. The `queue` column counts the GPUs that queued jobs ask for, in both tools.
+
+Shared parsing and drawing live in `common.sh`, which must stay next to `sremain.sh` and `scrime.sh`.
+
+## sremain (free GPUs)
+
+`sremain [-a|--all] [-f|--file PATH] [--ascii] [-h|--help]`
+
+- `-a, --all`  Also list every node with the users on it (`user:gpus/cpus`).
+- `-f, --file PATH`  Read `squeue` output from a file for offline testing. When set, the tool also looks for `20251105.sinfo` (in the same directory or the current directory) for the node layout. If not found, it falls back to live `sinfo`.
+- `--ascii`  Draw with ASCII only. This is the default when the locale isn't UTF-8.
 
 Examples:
 ```
 sremain
 sremain -a
 sremain -f sample.squeue
-sremain -a -f sample.squeue
 ```
 
 Sample output (truncated):
 ```
-GPU             REMAIN          CPU_REMAIN
------------------------------------------
-2080ti          44/46           108/120
+GPU availability · 163 of 621 free · 102 queued · 2 without a free CPU
+type        free gpus  queue  free cpus  node:free
+──────────────────────────────────────────────────────────────────────────────────
+2080ti         44/46       ·    48/120   n[1,4-5]:8  n[2-3]:7  n6:6
+3090           46/175      ·   165/1024  n32:6  n[28,31,33]:4  n[17,19,21,27,30]:3
+                                         n[11,18,25]:2  n[9,12-14,23,26,29]:1
+                                         no CPU: n[24,34]:1
+A6000          12/48      +6   146/272   n60:5  n[44-45]:2  n[42-43,46]:1
+A100-pci        0/8        ·   104/128
 
-NODE            GPU             REMAIN          CPU_REMAIN
----------------------------------------------------------
-n2              2080ti          7/8             6/20
+node  type        free gpus  free cpus  user:gpus/cpus
+──────────────────────────────────────────────────────────────────────────────────
+n2    2080ti            7/8      6/20   jaehyunglim:1/4  qwg724:0/10
 ```
 
-## Parsing notes
-
-- `sremain` uses this `squeue` format string internally (group column removed):
-  - `squeue -o "%6i %12j  %9T %12u %15P %4D %20R %4C %40b %8m %11l %11L"`
-- The parser reads columns from the right to tolerate spaces in job NAMEs.
-- GPU count is derived from the `TRES_PER_NODE` field (e.g., `gres/gpu:MODEL:4`).
-- Draining/down/unknown nodes are excluded; CPU-only partitions are ignored.
-
-If you pass `-f sample.squeue`, the tool expects a header like:
-`JOBID NAME STATE USER PARTITION NODE NODELIST(REASON) CPUS TRES_PER_NODE MIN_MEM TIME_LIMIT TIME_LEFT`.
-
+- `node:free` groups nodes by how many GPUs they have free, so `n[28,31,33]:4` means 4 free on each of n28, n31 and n33. The first item is the largest job that fits on one node right now.
+- A node with free GPUs but no free CPU can't start a job. Its GPUs aren't counted as free and are listed dim after `no CPU:`.
+- Rows with nothing free are dim.
 
 ## scrime (per-user GPU usage)
 
-Summarize per-user running GPUs and queued GPUs with a ranked, colorized table.
-
 `scrime [-f|--file PATH] [-t|--threshold PCT] [--ascii] [-h|--help]`
 
-- `-f, --file PATH`  Read a saved `squeue` output (same format as `sremain`).
-- `-t, --threshold`  Percent of total running GPUs to flag as “CRIMINAL” (default: 10).
-- `--ascii`  Draw with ASCII only. This is the default when the locale isn't UTF-8. Use it if your terminal draws block characters double-width.
+- `-f, --file PATH`  Read a saved `squeue` output (same as `sremain`).
+- `-t, --threshold`  Percent of running GPUs to flag as `CRIMINAL` (default: 10).
+- `--ascii`  Draw with ASCII only. This is the default when the locale isn't UTF-8.
 
 Examples:
 ```
@@ -90,28 +98,33 @@ scrime -t 15
 
 Sample output (truncated):
 ```
-GPU usage · 456 running · 102 queued · 32 users · limit 10%
-──────────────────────────────────────────────────────────────────
-  #  user          gpus  queue  share  █ run  ░ queued  ┆ limit
-  1  tsyeom          88      ·  19.3%  ████████████████████████  CRIMINAL
-  2  gongda0e        76      ·  16.7%  ████████████████████▋     CRIMINAL
-  3  jaehyunglim     33      ·   7.2%  █████████   ┆
- 13  minkyoung       10    +30   2.2%  ██▋░░░░░░░░ ┆
-     pending only (no running GPUs)
-  ·  hjh9902          ·     +4      ·  ░           ┆
+GPU usage · 456 of 621 running · 102 queued · 32 users · limit 10% = 46
+ #  user          gpus  queue  share            type:gpus
+──────────────────────────────────────────────────────────────────────────────────
+ 1  tsyeom          88      ·  19.3%  CRIMINAL  3090:47  A6000:30  RTX6000ADA:9
+                                                A5000:1  RTX4090:1
+ 5  r7play          24    +12   5.3%            A100-80GB:24+12
+    queued only
+ ·  hjh9902          ·     +4      ·            H200:+4
 ```
 
-- Each bar shows running GPUs (`█`) followed by queued GPUs (`░`), scaled to the top user. So `█` plus `░` shows how far a user would reach if their queue ran.
-- `┆` marks the threshold. Blocks past it are red for users over the limit.
+- `type:gpus` shows the GPU types a user runs on. `A100-80GB:24+12` is 24 running and 12 more queued there.
+- Users at or over the threshold are red and flagged `CRIMINAL`. Users queuing more than 50 GPUs are flagged `WTF`.
 - Users with only queued GPUs are listed at the bottom.
+
+## Parsing notes
+
+- Live data comes from `squeue -o "%T %u %P %D %C %b %R"` and `sinfo -o "%P %C %t %N %D %G %m %l %f"`.
+- GPUs per job come from `TRES_PER_NODE` (e.g. `gres/gpu:MODEL:4`) times its node count. GPUs per node come from sinfo's GRES, or from a feature like `...-8GPU` when GRES is cut off.
+- CPU use per node includes jobs from the `cpu-*` partitions, since they share the GPU nodes.
+- Down, draining and unknown nodes are left out; `cpu-*` partitions aren't GPU types.
+- `-f` accepts a file in the format above or the older one in `sample.squeue` (`JOBID NAME STATE USER PARTITION NODE NODELIST(REASON) CPUS TRES_PER_NODE ...`), told apart by the header.
 
 ## Output width
 
-Both tools fit their tables to the terminal width.
+Both tools fit their tables to the terminal width by wrapping the last column between items. The title line wraps between stats.
 
-- `sremain` keeps the usual 15-char columns when rows fit. Otherwise it switches to a compact layout, and with `-a` wraps the USERS column onto indented lines.
-- `scrime` resizes the usage bar (8–50 chars) to fill the remaining width and hides it when less than 8 chars are left. The summary line wraps between items.
-- The width comes from `$COLUMNS` if exported (`watch` does this), otherwise from the terminal. Piped or redirected output has no width limit. You can force a width with e.g. `COLUMNS=100 sremain -a | less -R`.
+The width comes from `$COLUMNS` if exported (`watch` does this), otherwise from the terminal. Piped or redirected output has no width limit. You can force a width with e.g. `COLUMNS=100 sremain -a | less -R`. Set `NO_COLOR` to turn colors off.
 
 ## Notes
 - Tested against saved outputs (`sample.squeue`) and live Slurm on our cluster.

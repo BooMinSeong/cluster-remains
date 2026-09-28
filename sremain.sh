@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Colors
-HEADER="\033[95m"
-OKGREEN="\033[92m"
-WARNING="\033[93m"
-FAIL="\033[91m"
-# Sky-blue for fully free GPU nodes when -a is set
-SKYBLUE="\033[96m"
-ENDC="\033[0m"
+# Show where GPUs are free: per GPU type, how many are free and on which
+# nodes. With -a, also every node and who is using it.
+
+source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/common.sh"
 
 ALL=0
-SQUEUE_FILE=""
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [-a|--all] [-f|--file squeue_file]
+Usage: $(basename "$0") [-a|--all] [-f|--file PATH] [--ascii]
+
+Show free GPUs per GPU type and the nodes they are on.
 
 Options:
-  -a, --all        Show all nodes and include USERS column per node
-  -f, --file PATH  Read squeue output from a file; when set, also try to read
-                   sinfo snapshot from 20251105.sinfo (same dir or CWD)
+  -a, --all        Also list every node with the users on it
+  -f, --file PATH  Read squeue output from a file (offline mode); sinfo is
+                   read from $SINFO_SNAPSHOT next to it or in the current
+                   directory if there is one
+      --ascii      Draw with ASCII only (default: Unicode on UTF-8 locales)
   -h, --help       Show this help
+
+node:free lists nodes by how many GPUs they have free, e.g. n[4-5]:8.
+GPUs on a node with no free CPU can't be used, so they aren't counted as
+free and are listed last, after "no CPU:".
 EOF
 }
 
@@ -29,438 +32,180 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -a|--all) ALL=1; shift ;;
     -f|--file)
-      [[ $# -ge 2 ]] || { echo "-f|--file requires a path" >&2; exit 1; }
+      [[ $# -ge 2 ]] || die "$1 requires a path"
       SQUEUE_FILE="$2"; shift 2 ;;
+    --ascii) ASCII=1; shift ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
 
-# Terminal width to fit the tables into: $COLUMNS if exported (watch does this),
-# else the tty's width. 0 means no limit (output is piped or redirected).
-TERM_COLS=0
-if [[ "${COLUMNS:-}" =~ ^[0-9]+$ ]] && (( COLUMNS > 0 )); then
-  TERM_COLS=$COLUMNS
-elif [[ -t 1 ]]; then
-  TERM_COLS=$(tput cols 2>/dev/null || true)
-  [[ "$TERM_COLS" =~ ^[0-9]+$ ]] || TERM_COLS=0
-fi
-WIDE_COL=15       # column width of the default (wide) layout
-MIN_LAST_COL=20   # never wrap the last column narrower than this
+declare -A USED_GPUS=() USED_CPUS=()   # node -> allocated
+declare -A USER_GPUS=() USER_CPUS=()   # "node user" -> allocated
+declare -A QUEUED=()                   # GPU type -> GPUs asked for by queued jobs
 
-# Declare associative arrays
-declare -A CLUSTER_GPU_TOTAL   # partition -> total GPUs
-declare -A CLUSTER_CPU_TOTAL   # partition -> total CPUs
-declare -A NODE_GPU_TYPE       # node -> partition name
-declare -A NODE_GPU_PER_NODE   # node -> gpu per node
-declare -A NODE_CPU_PER_NODE   # node -> cpu per node
-declare -A NODE_STATE          # node -> state
-declare -A DRNG_NODE_SET       # node -> 1 (draining)
-
-declare -A DEV_USED_GPU        # partition -> used GPUs (from squeue)
-declare -A DEV_USED_CPU        # partition -> used CPUs (from squeue)
-declare -A NODE_USED_GPU       # node -> used GPUs
-declare -A NODE_USED_CPU       # node -> used CPUs
-declare -A NODE_USER_GPU       # key "node|user" -> gpu count
-declare -A NODE_USER_CPU       # key "node|user" -> cpu count
-
-trim() { sed 's/^\s\+//; s/\s\+$//' ; }
-
-parse_gpu_count_from_tres() {
-  local field="$1"
-  [[ -z "$field" ]] && { echo 0; return; }
-  if [[ "$field" == "N/A" ]]; then echo 0; return; fi
-  if [[ "$field" != *"gres/gpu"* ]]; then echo 0; return; fi
-  local norm="${field//=/:}"
-  IFS=',' read -r first _ <<< "$norm"
-  IFS=':' read -r -a parts <<< "$first"
-  for (( i=${#parts[@]}-1; i>=0; i-- )); do
-    if [[ ${parts[$i]} =~ ^[0-9]+$ ]]; then
-      echo "${parts[$i]}"; return
-    fi
-  done
-  # no explicit count but it's a gpu TRES
-  echo 1
-}
-
-parse_gpu_count_from_gres_feature() {
-  local gres="$1"; shift || true
-  local feat="$1"; shift || true
-  local cnt=""
-  # Try feature like '...-8GPU'
-  cnt=$(printf '%s' "$feat" | grep -Eo '([0-9]+)GPU' | tail -n1 | grep -Eo '[0-9]+' || true)
-  if [[ -n "$cnt" ]]; then echo "$cnt"; return; fi
-  # Try gres like 'gpu:MODEL:8'
-  cnt=$(printf '%s' "$gres" | awk -F: '{for(i=NF;i>=1;i--) if($i ~ /^[0-9]+$/){print $i; exit}}')
-  if [[ -n "$cnt" ]]; then echo "$cnt"; return; fi
-  echo 0
-}
-
-expand_nodelist() {
-  local nl="$1"
-  if [[ -z "$nl" ]]; then return; fi
-  if [[ "$nl" =~ ^n\[[^]]+\]$ ]]; then
-    local inside="${nl#n[}"; inside="${inside%]}"
-    IFS=',' read -r -a parts <<< "$inside"
-    for p in "${parts[@]}"; do
-      if [[ "$p" == *-* ]]; then
-        local s="${p%-*}"; local e="${p#*-}"
-        for ((i=s; i<=e; i++)); do printf 'n%s ' "$i"; done
-      else
-        printf 'n%s ' "$p"
-      fi
-    done
-  elif [[ "$nl" =~ ^n[0-9]+$ ]]; then
-    printf '%s' "$nl"
-  else
-    # not a node list we recognize
-    return
-  fi
-}
-
-read_sinfo() {
-  local sinfo_lines
-  if [[ -n "$SQUEUE_FILE" ]]; then
-    local base_dir
-    base_dir=$(dirname -- "$SQUEUE_FILE")
-    local candidate="$base_dir/20251105.sinfo"
-    if [[ -r "$candidate" ]]; then
-      sinfo_lines=$(cat -- "$candidate")
-    elif [[ -r "20251105.sinfo" ]]; then
-      sinfo_lines=$(cat -- "20251105.sinfo")
-    else
-      sinfo_lines=$(sinfo -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %30f" || true)
-    fi
-  else
-    sinfo_lines=$(sinfo -o "%16P %14C  %6t %25N %5D %15G  %10m %11l %30f" || true)
-  fi
-
-  # Process sinfo (skip header)
-  local first=1
-  while IFS= read -r line; do
-    if (( first )); then first=0; continue; fi
-    [[ -z "$line" ]] && continue
-    # shellcheck disable=SC2206
-    local arr=( $line )
-    local part="${arr[0]//\*/}"      # partition (GPU name, strip *)
-    local cfield="${arr[1]}"    # CPUS(A/I/O/T)
-    local state="${arr[2]}"     # state
-    local nodelist="${arr[3]}"  # n[...]
-    local nodes="${arr[4]}"     # number of nodes
-    local gres="${arr[5]}"      # gpu:MODEL:COUNT
-    local feature="${arr[8]:-}" # AVAIL_FEATURES (may be missing)
-
-    # Skip cpu* partitions and down/drain/drng/unk states
-    if [[ "$part" == cpu* ]]; then continue; fi
-    if [[ "$state" == down* || "$state" == drain* || "$state" == drng* || "$state" == unk* ]]; then continue; fi
-
-    # Per-node GPU count
-    local per_node_gpu
-    per_node_gpu=$(parse_gpu_count_from_gres_feature "$gres" "$feature")
-    # Total CPUs for this partition line
-    local total_cpus
-    total_cpus=$(awk -F/ '{print $4}' <<< "$cfield")
-    # CPU per node (integer)
-    local cpu_per_node=$(( total_cpus / nodes ))
-
-    # Accumulate cluster totals
-    CLUSTER_GPU_TOTAL["$part"]=$(( ${CLUSTER_GPU_TOTAL["$part"]:-0} + (nodes * per_node_gpu) ))
-    CLUSTER_CPU_TOTAL["$part"]=$(( ${CLUSTER_CPU_TOTAL["$part"]:-0} + total_cpus ))
-
-    # Expand nodes and populate node info
-    local expanded
-    expanded=$(expand_nodelist "$nodelist") || true
-    for n in $expanded; do
-      if [[ -z "${NODE_GPU_TYPE[$n]:-}" ]]; then
-        NODE_GPU_TYPE["$n"]="$part"
-        NODE_GPU_PER_NODE["$n"]=$per_node_gpu
-        NODE_CPU_PER_NODE["$n"]=$cpu_per_node
-        NODE_STATE["$n"]="$state"
-      fi
-    done
-
-    # Track draining nodes
-    if [[ "$state" == drng* ]]; then
-      for n in $expanded; do DRNG_NODE_SET["$n"]=1; done
-    fi
-  done <<< "$sinfo_lines"
-}
-
-read_squeue() {
-  local squeue_lines
-  if [[ -n "$SQUEUE_FILE" ]]; then
-    squeue_lines=$(cat -- "$SQUEUE_FILE")
-  else
-    # Removed group column (%g) to match sample.squeue layout
-    squeue_lines=$(squeue -o "%6i %12j  %9T %12u %15P %4D %20R %4C %40b %8m %11l %11L" || true)
-  fi
-  # squeue -o   "%6i %12j  %9T %12u %15P %4D %20R %4C %40b %8m %11l %11L"
-
-  # Skip header; parse from right to be robust
-  local first=1
-  while IFS= read -r line; do
-    if (( first )); then first=0; continue; fi
-    [[ -z "$line" ]] && continue
-    # shellcheck disable=SC2206
-    local arr=( $line )
-    local n=${#arr[@]}
-    # Need at least 12-13 tokens based on default squeue
-    if (( n < 12 )); then continue; fi
-    # With %g removed, shift user index one to the left
-    local user="${arr[n-9]}"
-    local part="${arr[n-8]}"
-    local nodelist="${arr[n-6]}"
-    local cpus="${arr[n-5]}"
-    local tres="${arr[n-4]}"
-
-    # Skip non-node allocations and draining nodes
-    if [[ "${nodelist:0:1}" != "n" ]]; then continue; fi
-
-    # Expand node list
-    local expanded
-    expanded=$(expand_nodelist "$nodelist") || true
-    [[ -z "$expanded" ]] && continue
-    local nodes_count=0
-    for _n in $expanded; do nodes_count=$((nodes_count+1)); done
-
-    # GPU and CPU per node for this job
-    local gcount
-    gcount=$(parse_gpu_count_from_tres "$tres")
-    local gpu_per_node=$(( gcount / nodes_count ))
-    local cpu_per_node=$(( cpus / nodes_count ))
-
-    # Accumulate per device
-    DEV_USED_GPU["$part"]=$(( ${DEV_USED_GPU["$part"]:-0} + gpu_per_node ))
-    DEV_USED_CPU["$part"]=$(( ${DEV_USED_CPU["$part"]:-0} + cpu_per_node ))
-
-    # Accumulate per node and per user
-    for n in $expanded; do
-      # Skip draining nodes
-      if [[ -n "${DRNG_NODE_SET[$n]:-}" ]]; then continue; fi
-      NODE_USED_GPU["$n"]=$(( ${NODE_USED_GPU["$n"]:-0} + gpu_per_node ))
-      NODE_USED_CPU["$n"]=$(( ${NODE_USED_CPU["$n"]:-0} + cpu_per_node ))
-      if (( ALL )); then
-        local key="$n|$user"
-        NODE_USER_GPU["$key"]=$(( ${NODE_USER_GPU["$key"]:-0} + gpu_per_node ))
-        NODE_USER_CPU["$key"]=$(( ${NODE_USER_CPU["$key"]:-0} + cpu_per_node ))
-      fi
-    done
-  done <<< "$squeue_lines"
-}
-
-# Length of the longest argument
-max_len() {
-  local s m=0
-  for s in "$@"; do
-    if (( ${#s} > m )); then m=${#s}; fi
-  done
-  echo "$m"
-}
-
-layout_total() {
-  local i n=${#LAYOUT_W[@]}
-  LAYOUT_TOTAL=$(( (n - 1) * LAYOUT_GAP ))
-  for (( i=0; i<n; i++ )); do LAYOUT_TOTAL=$(( LAYOUT_TOTAL + LAYOUT_W[i] )); done
-}
-
-# Choose column widths from each column's natural (content) width.
-# Wide layout pads all but the last column to WIDE_COL. If that doesn't fit in
-# TERM_COLS, use the compact layout (natural widths, 2-space gaps); if the last
-# column still overflows, narrow it so print_row wraps it.
-# Sets LAYOUT_W, LAYOUT_GAP and LAYOUT_TOTAL.
-choose_layout() {
-  local -a nat=("$@")
-  local n=$# i
-  LAYOUT_W=("${nat[@]}"); LAYOUT_GAP=1
-  for (( i=0; i<n-1; i++ )); do
-    if (( LAYOUT_W[i] < WIDE_COL )); then LAYOUT_W[i]=$WIDE_COL; fi
-  done
-  layout_total
-  if (( TERM_COLS > 0 && LAYOUT_TOTAL > TERM_COLS )); then
-    LAYOUT_W=("${nat[@]}"); LAYOUT_GAP=2
-    layout_total
-    if (( LAYOUT_TOTAL > TERM_COLS )); then
-      local room=$(( LAYOUT_W[n-1] - (LAYOUT_TOTAL - TERM_COLS) ))
-      if (( room < MIN_LAST_COL )); then room=$MIN_LAST_COL; fi
-      LAYOUT_W[n-1]=$room
-      layout_total
-    fi
-  fi
-}
-
-# Wrap a USERS summary like "a(1, 2), b(3, 4)" to $2 columns, breaking only
-# between entries (split on "), " since entries contain ", " themselves)
-wrap_users() {
-  awk -v w="$2" '{
-    n = split($0, it, /\), /)
-    line = ""
-    for (i = 1; i <= n; i++) {
-      s = it[i] (i < n ? ")," : "")
-      if (line != "" && length(line) + 1 + length(s) > w) { print line; line = s }
-      else line = (line == "" ? s : line " " s)
-    }
-    print line
-  }' <<< "$1"
-}
-
-# Print a colored row using the current layout; a last cell wider than its
-# column continues on following lines, indented to that column
-print_row() {
-  local color=$1; shift
-  local -a cells=("$@")
-  local n=$# i c line=""
-  for (( i=0; i<n-1; i++ )); do
-    printf -v c '%-*s%*s' "${LAYOUT_W[i]}" "${cells[i]}" "$LAYOUT_GAP" ''
-    line+=$c
-  done
-  local last=${cells[n-1]}
-  if (( ${#last} <= LAYOUT_W[n-1] )); then
-    printf "%b%s%b\n" "$color" "$line$last" "$ENDC"
-    return
-  fi
-  local indent part
-  printf -v indent '%*s' "${#line}" ''
-  while IFS= read -r part; do
-    printf "%b%s%b\n" "$color" "$line$part" "$ENDC"
-    line=$indent
-  done < <(wrap_users "$last" "${LAYOUT_W[n-1]}")
-}
-
-print_rule() {
-  local rule
-  printf -v rule '%*s' "$LAYOUT_TOTAL" ''
-  printf -- '%s\n' "${rule// /-}"
-}
-
-# Format "rem/total" cells into FRAC_CELLS with the slashes lined up.
-# Args: the rem values, "--", then the total values.
-frac_cells() {
-  local -a rems=() tots=()
-  while [[ $# -gt 0 && "$1" != "--" ]]; do rems+=("$1"); shift; done
-  shift
-  tots=("$@")
-  local rw i c
-  rw=$(max_len "${rems[@]}")
-  FRAC_CELLS=()
-  for i in "${!rems[@]}"; do
-    printf -v c '%*s/%s' "$rw" "${rems[i]}" "${tots[i]}"
-    FRAC_CELLS+=("$c")
-  done
-}
-
-print_gpu_table() {
-  local -a parts=() rg=() tg=() rc=() tc=() colors=()
-  local part
-  for part in "${!CLUSTER_GPU_TOTAL[@]}"; do
-    local total_g=${CLUSTER_GPU_TOTAL[$part]}
-    local total_c=${CLUSTER_CPU_TOTAL[$part]}
-    local used_g=${DEV_USED_GPU[$part]:-0}
-    local used_c=${DEV_USED_CPU[$part]:-0}
-    local rem_g=$(( total_g - used_g ))
-    local rem_c=$(( total_c - used_c ))
-    local color="$OKGREEN"
-    if (( rem_g == 0 )); then color="$FAIL"; fi
-    parts+=("$part"); rg+=("$rem_g"); tg+=("$total_g"); rc+=("$rem_c"); tc+=("$total_c")
-    colors+=("$color")
-  done
-
-  local -a gcells ccells
-  frac_cells "${rg[@]}" -- "${tg[@]}"; gcells=("${FRAC_CELLS[@]}")
-  frac_cells "${rc[@]}" -- "${tc[@]}"; ccells=("${FRAC_CELLS[@]}")
-
-  choose_layout "$(max_len GPU "${parts[@]}")" \
-    "$(max_len REMAIN "${gcells[@]}")" "$(max_len CPU_REMAIN "${ccells[@]}")"
-  print_row "$HEADER" "GPU" "REMAIN" "CPU_REMAIN"
-  print_rule
-  local i
-  for i in "${!parts[@]}"; do
-    print_row "${colors[i]}" "${parts[i]}" "${gcells[i]}" "${ccells[i]}"
-  done
-  echo
-}
-
-print_node_table() {
-  # Sort node names numerically by suffix (n<number>)
-  local tmp_list=""
-  for n in "${!NODE_GPU_TYPE[@]}"; do
-    local num=${n#n}
-    tmp_list+="$n $num\n"
-  done
-  local sorted_nodes
-  sorted_nodes=$(printf "%b" "$tmp_list" | sort -k2,2n | awk '{print $1}')
-
-  local -a nodes=() parts=() rg=() tg=() rc=() tc=() colors=() users=()
-  while read -r n; do
-    [[ -z "$n" ]] && continue
-    local part="${NODE_GPU_TYPE[$n]}"
-    local total_g=${NODE_GPU_PER_NODE[$n]:-0}
-    local total_c=${NODE_CPU_PER_NODE[$n]:-0}
-    local used_g=${NODE_USED_GPU[$n]:-0}
-    local used_c=${NODE_USED_CPU[$n]:-0}
-    local rem_g=$(( total_g - used_g ))
-    local rem_c=$(( total_c - used_c ))
-
-    if (( ALL == 0 )) && (( rem_g == 0 )); then
+read_jobs() {
+  local kind user part nodes cpus gpus list n per_cpu
+  while read -r kind user part nodes cpus gpus list; do
+    if [[ $kind == P ]]; then
+      if (( gpus > 0 )); then add QUEUED "$part" $(( gpus * nodes )); fi
       continue
     fi
-
-    local color="$OKGREEN"
-    if (( rem_g == 0 )); then
-      color="$FAIL"
-    elif (( ALL )) && (( total_g > 0 )) && (( rem_g == total_g )); then
-      # Full GPUs available (e.g., 8/8 or 4/4) highlighted in sky-blue only with -a
-      color="$SKYBLUE"
-    elif (( rem_c == 0 )); then
-      color="$WARNING"
-    fi
-
-    if (( ALL )); then
-      # Build USERS summary
-      local lines=""
-      for key in "${!NODE_USER_GPU[@]}"; do
-        if [[ "$key" == "$n|"* ]]; then
-          local user=${key#${n}|}
-          local gcnt=${NODE_USER_GPU[$key]}
-          local ccnt=${NODE_USER_CPU[$key]:-0}
-          lines+="$gcnt $user $ccnt\n"
-        fi
-      done
-      local summary="-"
-      if [[ -n "$lines" ]]; then
-        summary=$(printf "%b" "$lines" | sort -k1,1nr -k2,2 | awk '{printf "%s(%s, %s), ", $2, $1, $3}' | sed 's/, $//')
+    expand_nodes "$list"
+    if (( ${#EXPANDED[@]} == 0 )); then continue; fi
+    per_cpu=$(( cpus / ${#EXPANDED[@]} ))
+    for n in "${EXPANDED[@]}"; do
+      if [[ -z ${NODE_TYPE[$n]:-} ]]; then continue; fi
+      add USED_GPUS "$n" "$gpus"
+      add USED_CPUS "$n" "$per_cpu"
+      if (( ALL )); then
+        add USER_GPUS "$n $user" "$gpus"
+        add USER_CPUS "$n $user" "$per_cpu"
       fi
-      users+=("$summary")
-    fi
-    nodes+=("$n"); parts+=("$part"); rg+=("$rem_g"); tg+=("$total_g"); rc+=("$rem_c"); tc+=("$total_c")
-    colors+=("$color")
-  done <<< "$sorted_nodes"
-
-  local -a gcells ccells
-  frac_cells "${rg[@]}" -- "${tg[@]}"; gcells=("${FRAC_CELLS[@]}")
-  frac_cells "${rc[@]}" -- "${tc[@]}"; ccells=("${FRAC_CELLS[@]}")
-
-  local -a header=("NODE" "GPU" "REMAIN" "CPU_REMAIN")
-  local -a widths=("$(max_len NODE "${nodes[@]}")" "$(max_len GPU "${parts[@]}")" \
-    "$(max_len REMAIN "${gcells[@]}")" "$(max_len CPU_REMAIN "${ccells[@]}")")
-  if (( ALL )); then
-    header+=("USERS(G, C)")
-    widths+=("$(max_len "USERS(G, C)" "${users[@]}")")
-  fi
-  choose_layout "${widths[@]}"
-  print_row "$HEADER" "${header[@]}"
-  print_rule
-  local i
-  for i in "${!nodes[@]}"; do
-    if (( ALL )); then
-      print_row "${colors[i]}" "${nodes[i]}" "${parts[i]}" "${gcells[i]}" "${ccells[i]}" "${users[i]}"
-    else
-      print_row "${colors[i]}" "${nodes[i]}" "${parts[i]}" "${gcells[i]}" "${ccells[i]}"
-    fi
-  done
-  echo
+    done
+  done < <(job_lines)
 }
 
-read_sinfo
-read_squeue
-print_gpu_table
-print_node_table
+# Free GPUs and CPUs per node. A node's free GPUs are usable only if it
+# has a free CPU too; the rest are stranded.
+declare -A FREE=() CPU_FREE=()
+STRANDED=0
+
+count_free() {
+  local n f
+  for n in "${NODES[@]}"; do
+    f=$(( NODE_GPUS[$n] - ${USED_GPUS[$n]:-0} ))
+    FREE[$n]=$(( f > 0 ? f : 0 ))
+    f=$(( NODE_CPUS[$n] - ${USED_CPUS[$n]:-0} ))
+    CPU_FREE[$n]=$(( f > 0 ? f : 0 ))
+    if (( CPU_FREE[$n] == 0 )); then STRANDED=$(( STRANDED + FREE[$n] )); fi
+  done
+}
+
+# Per GPU type: free/total GPUs and CPUs, queued GPUs, and its nodes grouped
+# by free GPUs, most first. Fills the T_* arrays in TYPES order.
+T_FREE=() T_GPUS=() T_CPU_FREE=() T_CPUS=() T_ITEMS=()
+
+sum_types() {
+  local -A free=() gpus=() cpu_free=() cpus=() most=() groups=() stranded=()
+  local t n f key
+  for n in "${NODES[@]}"; do
+    t=${NODE_TYPE[$n]} f=${FREE[$n]}
+    add gpus "$t" "${NODE_GPUS[$n]}"
+    add cpus "$t" "${NODE_CPUS[$n]}"
+    add cpu_free "$t" "${CPU_FREE[$n]}"
+    if (( f == 0 )); then continue; fi
+    if (( f > ${most[$t]:-0} )); then most[$t]=$f; fi
+    if (( CPU_FREE[$n] == 0 )); then stranded["$t $f"]+=" $n"; continue; fi
+    add free "$t" "$f"
+    groups["$t $f"]+=" $n"
+  done
+
+  local -a items no_cpu
+  for t in "${TYPES[@]}"; do
+    items=() no_cpu=()
+    for (( f=${most[$t]:-0}; f>0; f-- )); do
+      key="$t $f"
+      if [[ -n ${groups[$key]:-} ]]; then
+        # shellcheck disable=SC2086
+        compress_nodes ${groups[$key]}
+        items+=("$REPLY:$f")
+      fi
+      if [[ -n ${stranded[$key]:-} ]]; then
+        # shellcheck disable=SC2086
+        compress_nodes ${stranded[$key]}
+        no_cpu+=("$REPLY:$f")
+      fi
+    done
+    if (( ${#no_cpu[@]} )); then items+=("${C_DIM}no CPU: ${no_cpu[*]}$C_END"); fi
+    items_join "${items[@]}"
+    T_ITEMS+=("$REPLY")
+    T_FREE+=("${free[$t]:-0}") T_GPUS+=("${gpus[$t]}")
+    T_CPU_FREE+=("${cpu_free[$t]}") T_CPUS+=("${cpus[$t]}")
+  done
+}
+
+# Queued GPUs as a cell: +N in yellow, or a dim dot
+queue_cell() {
+  if (( $1 > 0 )); then REPLY="$C_YELLOW+$1$C_END"; else REPLY="$C_DIM$G_NONE$C_END"; fi
+}
+
+print_types() {
+  local -a gcells ccells
+  fracs T_FREE T_GPUS; gcells=("${FRACS[@]}")
+  fracs T_CPU_FREE T_CPUS; ccells=("${FRACS[@]}")
+  tbl_new lrrrl "type" "free gpus" "queue" "free cpus" "node:free"
+  local i t g c q
+  for i in "${!TYPES[@]}"; do
+    t=${TYPES[i]} g=${gcells[i]} c=${ccells[i]}
+    queue_cell "${QUEUED[$t]:-0}"; q=$REPLY
+    if (( T_FREE[i] > 0 )); then
+      color_free "$g" "$C_GREEN"
+      tbl_row "$t" "$REPLY" "$q" "$c" "${T_ITEMS[i]}"
+    else
+      tbl_row "$C_DIM$t$C_END" "$C_DIM$g$C_END" "$q" "$C_DIM$c$C_END" "${T_ITEMS[i]}"
+    fi
+  done
+  tbl_print
+}
+
+print_nodes() {
+  # Users per node, most GPUs first; CPU-only users dimmed
+  local -A users=()
+  local n user g c
+  while read -r n g c user; do
+    if (( g > 0 )); then
+      users[$n]+="$ITEM$user:$g/$c"
+    else
+      users[$n]+="$ITEM$C_DIM$user:$g/$c$C_END"
+    fi
+  done < <(for key in "${!USER_GPUS[@]}"; do
+             printf '%s %s %s %s\n' "${key% *}" "${USER_GPUS[$key]}" "${USER_CPUS[$key]}" "${key#* }"
+           done | sort -k2,2nr -k3,3nr -k4,4)
+
+  local -a free=() gpus=() cpu_free=() cpus=() gcells ccells
+  for n in "${NODES[@]}"; do
+    free+=("${FREE[$n]}") gpus+=("${NODE_GPUS[$n]}")
+    cpu_free+=("${CPU_FREE[$n]}") cpus+=("${NODE_CPUS[$n]}")
+  done
+  fracs free gpus; gcells=("${FRACS[@]}")
+  fracs cpu_free cpus; ccells=("${FRACS[@]}")
+
+  tbl_new llrrl "node" "type" "free gpus" "free cpus" "user:gpus/cpus"
+  local i list
+  for i in "${!NODES[@]}"; do
+    n=${NODES[i]} list=${users[${NODES[i]}]:-}
+    list=${list#"$ITEM"}
+    if (( free[i] > 0 && cpu_free[i] > 0 )); then
+      color_free "${gcells[i]}" "$C_GREEN"
+      tbl_row "$n" "${NODE_TYPE[$n]}" "$REPLY" "${ccells[i]}" "$list"
+    else
+      tbl_row "$C_DIM$n$C_END" "$C_DIM${NODE_TYPE[$n]}$C_END" "$C_DIM${gcells[i]}$C_END" \
+        "$C_DIM${ccells[i]}$C_END" "$list"
+    fi
+  done
+  tbl_print
+}
+
+init_style
+load_nodes
+(( ${#NODES[@]} )) || die "no GPU nodes found in sinfo"
+read_jobs
+count_free
+sum_types
+
+free=0 total=0 queued=0
+for i in "${!TYPES[@]}"; do
+  free=$(( free + T_FREE[i] )) total=$(( total + T_GPUS[i] ))
+  queued=$(( queued + ${QUEUED[${TYPES[i]}]:-0} ))
+done
+stats=("$free of $total free" "$queued queued")
+if (( STRANDED )); then stats+=("$STRANDED without a free CPU"); fi
+if (( NODES_OFF == 1 )); then stats+=("1 node down"); fi
+if (( NODES_OFF > 1 )); then stats+=("$NODES_OFF nodes down"); fi
+print_title "GPU availability" "${stats[@]}"
+print_types
+if (( ALL )); then
+  echo
+  print_nodes
+fi
