@@ -24,10 +24,16 @@ Options:
   -h, --help       Show this help
 
 Queued jobs show why they wait, in plain words, and Slurm's estimated start
-if it has one. Fairshare shows the GPU hours you used per GPU type, decayed
+if it has one. prio is the job's priority as a whole number, the same one
+sprio shows; squeue's PRIORITY (%p) is this number divided by 2^32. Fairshare shows the GPU hours you used per GPU type, decayed
 by the half-life, times the partition's billing weight. Your priority comes
 almost only from fairshare, so the types with the biggest share cost you the
 most.
+
+Recovery projects your fairshare factor if you start nothing new: your usage
+decays by the half-life and your running jobs add to it until they end,
+while everyone else's usage is held where it is now. Users with no usage
+always rank first, which caps the factor anyone with usage can reach.
 EOF
 }
 
@@ -47,9 +53,36 @@ done
 ACCOUNT="" FACTOR="" RANK=0 PEERS=0
 GPU_LIMIT="" GPU_USED=0
 declare -A USAGE=()   # TRES (cpu, billing, gres/gpu:TYPE) -> decayed minutes
+FS_WEIGHT=""          # PriorityWeightFairShare
+HALF=""               # PriorityDecayHalfLife as Slurm prints it
+HALF_SECS=0
+RECOVERY=(1 3 7 14 28 56)   # days ahead to project the fairshare factor to
+PROJ=()                     # "DAYS FACTOR RANK" per RECOVERY entry
+IDLE=0                      # other users with no usage, always ranked first
+
+read_config() {
+  local key _ value
+  while read -r key _ value; do
+    case $key in
+      PriorityWeightFairShare) FS_WEIGHT=$value ;;
+      PriorityDecayHalfLife) HALF=$value ;;
+    esac
+  done < <(scontrol show config 2>/dev/null)
+  if [[ $HALF =~ ^(([0-9]+)-)?([0-9]+):([0-9]+):([0-9]+)$ ]]; then
+    HALF_SECS=$(( ${BASH_REMATCH[2]:-0} * 86400 + 10#${BASH_REMATCH[3]} * 3600 +
+                  10#${BASH_REMATCH[4]} * 60 + 10#${BASH_REMATCH[5]} ))
+  fi
+}
 
 # Read every association once. The target's own record gives its limits and
 # usage; the other users of its account give its fairshare rank.
+#
+# Fair Tree ranks the users of an account by usage per share, fewest first,
+# and gives the user at rank r of n the factor (n - r + 1) / n. To project
+# the factor, the target's usage decays by the half-life and its running
+# jobs keep adding their billing until they end (on average), while every
+# other user's usage is held where it is now, as if they kept using at the
+# same pace.
 read_assoc() {
   local kind a b c
   while read -r kind a b c; do
@@ -58,8 +91,11 @@ read_assoc() {
       L) GPU_LIMIT=$a GPU_USED=$b ;;
       U) USAGE[$a]=$b ;;
       R) RANK=$a PEERS=$b ;;
+      P) PROJ+=("$a $b $c") ;;
+      I) IDLE=$a ;;
     esac
-  done < <(scontrol show assoc_mgr flags=assoc 2>/dev/null | awk -v me="$TARGET" '
+  done < <(scontrol show assoc_mgr flags=assoc 2>/dev/null |
+           awk -v me="$TARGET" -v half="$HALF_SECS" -v days="${RECOVERY[*]}" '
     # "a=N(5),b=64(2)" -> fills lim[] and use[] by key
     function tres(s,   n, t, i, k, v) {
       delete lim; delete use
@@ -70,6 +106,20 @@ read_assoc() {
         lim[k] = v; sub(/\(.*/, "", lim[k])
         use[k] = v; sub(/^[^(]*\(/, "", use[k]); sub(/\).*/, "", use[k])
       }
+    }
+    # The target'"'"'s usage in billing-seconds t seconds from now
+    function usage_at(t,   d, end) {
+      d = exp(-log(2) * t / half)
+      if (rate <= 0) return my_use * d
+      end = run_secs < t ? run_secs : t
+      return my_use * d + rate * half / log(2) * (exp(-log(2) * (t - end) / half) - d)
+    }
+    # The target'"'"'s rank t seconds from now
+    function rank_at(t,   k, u, r) {
+      u = usage_at(t) / my_shares
+      r = 1
+      for (k in key) if (k != me && key[k] < u) r++
+      return r
     }
     /^ClusterName=/ {
       acct = user = part = ""
@@ -85,17 +135,29 @@ read_assoc() {
     user == "" || part != "" { next }
     $1 ~ /^SharesRaw/ {
       split(substr($1, index($1, "=") + 1), s, "/")
+      shares = s[1]
       fac[acct, user] = s[4]
-      if (mine) { my_acct = acct; my_fac = s[4]; print "A", acct, s[4] }
+      if (mine) { my_acct = acct; my_fac = s[4]; my_shares = s[1]; print "A", acct, s[4] }
+    }
+    $1 ~ /^UsageRaw/ {
+      split(substr($1, index($1, "=") + 1), s, "/")
+      usage[acct, user] = s[1]
+      share[acct, user] = shares
+      if (mine) my_use = s[1]
     }
     !mine { next }
     $1 ~ /^GrpTRES=/ {
       tres(substr($1, 9))
       print "L", lim["gres/gpu"], use["gres/gpu"]
+      rate = use["billing"] + 0
     }
     $1 ~ /^GrpTRESMins=/ {
       tres(substr($1, 13))
       for (k in use) if (use[k] > 0) print "U", k, use[k]
+    }
+    $1 ~ /^GrpTRESRunMins=/ {
+      tres(substr($1, 16))
+      run_secs = rate > 0 ? use["billing"] * 60 / rate : 0
     }
     END {
       if (!found) exit
@@ -104,8 +166,18 @@ read_assoc() {
         if (p[1] != my_acct) continue
         peers++
         if (fac[k] + 0 > my_fac + 0) ahead++
+        key[p[2]] = share[k] > 0 ? usage[k] / share[k] : 1e300
+        if (p[2] != me && key[p[2]] == 0) idle++
       }
+      print "I", idle + 0
       print "R", ahead + 1, peers
+      if (half <= 0 || my_shares <= 0 || my_use + rate <= 0) exit
+
+      n = split(days, d, " ")
+      for (i = 1; i <= n; i++) {
+        r = rank_at(d[i] * 86400)
+        printf "P %s %.2f %d\n", d[i], (peers - r + 1) / peers, r
+      }
     }')
 }
 
@@ -216,7 +288,7 @@ short_time() {
 
 print_jobs() {
   local -a lines=()
-  mapfile -t lines < <(squeue -h -u "$TARGET" -o "%i|%j|%T|%P|%D|%C|%b|%M|%L|%S|%r|%N|%K" 2>/dev/null |
+  mapfile -t lines < <(squeue -h -u "$TARGET" -o "%i|%j|%T|%P|%D|%C|%b|%M|%L|%S|%r|%N|%K|%Q" 2>/dev/null |
                        sort -t'|' -k3,3r -k1,1V)
 
   local d=$C_DIM e=$C_END none="$C_DIM$G_NONE$C_END" dots="…"
@@ -224,10 +296,10 @@ print_jobs() {
   local nrun=0 nqueue=0 grun=0 gqueue=0 now
   printf -v now '%(%Y-%m-%dT%H:%M:%S)T' -1
   local id name state parts nodes cpus tres ran left start reason list
-  local gpus type more last tasks array
-  tbl_new rllllrrrrl "id" "name" "state" "type" "" "gpus" "cpus" "ran" "left" "node / why queued"
+  local gpus type more last tasks array prio
+  tbl_new rllllrrrrrl "id" "name" "state" "type" "" "gpus" "cpus" "ran" "left" "prio" "node / why queued"
   for line in "${lines[@]}"; do
-    IFS='|' read -r id name state parts nodes cpus tres ran left start reason list array <<< "$line"
+    IFS='|' read -r id name state parts nodes cpus tres ran left start reason list array prio <<< "$line"
 
     gpus=0
     if [[ $tres == *gpu* ]]; then
@@ -247,7 +319,7 @@ print_jobs() {
     case $state in
       RUNNING)
         nrun=$(( nrun + 1 )) grun=$(( grun + gpus ))
-        state=running
+        state=running prio=$none
         short_time "$ran"; ran=$REPLY
         short_time "$left"
         left=$REPLY
@@ -271,14 +343,14 @@ print_jobs() {
           why[-1]=${why[-1]%:*}
         fi ;;
       *)
-        state="$d${state,,}$e"
+        state="$d${state,,}$e" prio=$none
         short_time "$ran"; ran=$REPLY
         short_time "$left"; left=$REPLY
         why=("$list") ;;
     esac
     last=$(IFS=$ITEM; echo "${why[*]}")
     if (( gpus == 0 )); then gpus=$none; fi
-    tbl_row "$id" "$name" "$state" "$type" "$more" "$gpus" "$cpus" "$ran" "$left" "$last"
+    tbl_row "$id" "$name" "$state" "$type" "$more" "$gpus" "$cpus" "$ran" "$left" "$prio" "$last"
   done
 
   local stats=("$TARGET")
@@ -312,9 +384,7 @@ short_num() {
 
 print_fairshare() {
   local d=$C_DIM e=$C_END
-  local weight half
-  weight=$(scontrol show config 2>/dev/null | awk '$1 == "PriorityWeightFairShare" { print $3 }')
-  half=$(scontrol show config 2>/dev/null | awk '$1 == "PriorityDecayHalfLife" { print $3 }')
+  local weight=$FS_WEIGHT half=$HALF
   if [[ $half =~ ^([0-9]+)-00:00:00$ ]]; then half="${BASH_REMATCH[1]} days"; fi
 
   if [[ -z $FACTOR ]]; then
@@ -369,9 +439,50 @@ print_fairshare() {
     fi
   done
   tbl_print
+  print_recovery
+}
+
+# How the fairshare factor comes back if the target starts nothing new
+print_recovery() {
+  if (( ${#PROJ[@]} == 0 )); then return; fi
+  local d=$C_DIM e=$C_END
+  local stats=("if you start nothing new")
+  if (( GPU_USED > 0 )); then stats+=("running jobs count until they end"); fi
+  if (( IDLE )); then
+    stats+=("best $(awk -v n="$PEERS" -v i="$IDLE" 'BEGIN { printf "%.2f", (n - i) / n }'), as $IDLE users with no usage rank first")
+  fi
+  echo
+  print_title "Recovery" "${stats[@]}"
+
+  tbl_new lrrrl "in" "factor" "rank" "priority" ""
+  row_recovery "now" "$FACTOR" "$RANK"
+  local days factor rank when
+  for days in "${PROJ[@]}"; do
+    read -r days factor rank <<< "$days"
+    case $days in
+      1) when="1 day" ;;
+      7) when="1 week" ;;
+      14) when="2 weeks" ;;
+      28) when="4 weeks" ;;
+      56) when="8 weeks" ;;
+      *) when="$days days" ;;
+    esac
+    row_recovery "$when" "$factor" "$rank"
+  done
+  tbl_print
+}
+
+# One row of the recovery table: when, factor, rank
+row_recovery() {
+  local prio="$C_DIM$G_NONE$C_END"
+  if [[ $FS_WEIGHT =~ ^[0-9]+$ ]]; then
+    prio=$(awk -v f="$2" -v w="$FS_WEIGHT" 'BEGIN { printf "%.0f", f * w }')
+  fi
+  tbl_row "$1" "$2" "$3$C_DIM/$PEERS$C_END" "$prio" ""
 }
 
 init_style
+read_config
 read_assoc
 read_weights
 print_jobs

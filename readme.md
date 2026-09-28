@@ -151,12 +151,12 @@ GPU usage · 456 of 621 running · 102 queued · 32 users · limit 10% = 46
 Sample output:
 ```
 My jobs · dkim011006 · 4 running (12 GPUs) · 2 queued (4 GPUs) · GPU limit 64
-     id  name     state    type           gpus  cpus    ran   left  node / why queued
-───────────────────────────────────────────────────────────────────────────────────────────────────
-1027741  h200x4   running  H200-ZT           4    32    40m  2d23h  n90
-1027742  a80x4    running  A100-80GB         4    32  5h52m  2d18h  n59
-1027743  h200x2a  queued   H200       +1     2    16      ·      ·  Priority  jobs with higher priority are ahead
-                                                                    est. start 09-29 05:50
+     id  name     state    type           gpus  cpus    ran   left  prio  node / why queued
+─────────────────────────────────────────────────────────────────────────────────────────────────────────
+1027741  h200x4   running  H200-ZT           4    32    40m  2d23h     ·  n90
+1027742  a80x4    running  A100-80GB         4    32  5h52m  2d18h     ·  n59
+1027743  h200x2a  queued   H200       +1     2    16      ·      ·   542  Priority  jobs with higher priority are ahead
+                                                                          est. start 09-29 05:50
 
 Fairshare · dkim011006 · factor 0.05 · rank 575 of 607 · priority +500 of 10000 · half-life 7 days
 type            hours  weight  billing  share
@@ -165,10 +165,21 @@ H200              550     220     121k  55.3%  ███████████
 A100-80GB         609     108      66k  30.1%  ██████
 4A100             378      60      23k  10.4%  ██
 cpu               12k     0.6     7.4k   3.4%  █
+
+Recovery · if you start nothing new · running jobs count until they end · best 0.31, as 421 users with no usage rank first
+in       factor     rank  priority
+──────────────────────────────────
+now        0.05  575/607       500
+1 day      0.05  575/607       500
+1 week     0.06  571/607       600
+2 weeks    0.09  553/607       900
+4 weeks    0.13  527/607      1300
+8 weeks    0.19  494/607      1900
 ```
 
 Jobs:
 - Running jobs first, then queued ones. `type` is the first partition the job may run in, with `+N` more. `left` is red under an hour.
+- `prio` is a queued job's priority as a whole number, the same one `sprio` and `squeue -o %Q` show. The `PRIORITY` column of `squeue -o %p` is this number divided by 2³² (`0.00000012619421 × 2³² = 542`). Higher starts first, among jobs waiting for the same resources.
 - Queued jobs show Slurm's reason and what it means, and Slurm's estimated start when it has one in the future. Reasons that won't clear on their own (a failed dependency, a held job, a request over a limit) are red.
 - An array job counts as its number of queued tasks in the title. Long ids and names are cut with `…`.
 - `GPU limit` is your association's GPU limit (`GrpTRES gres/gpu`), red when you are at it.
@@ -177,6 +188,12 @@ Fairshare:
 - Read from `scontrol show assoc_mgr`, since `sshare` and `sacctmgr` may be off-limits to users.
 - `hours` are the GPU hours (CPU hours for `cpu`) you used on each GPU type, decayed by the half-life. `weight` is the partition's billing weight per GPU (`TRESBillingWeights`), and `billing` is hours times weight. `share` is each row's part of your billing.
 - Priority here comes almost only from fairshare (`PriorityWeightFairShare`), so the rows with the biggest share are what lower your priority the most. `rank` is your place among the users of your account by fairshare factor, 1 being the highest.
+
+Recovery:
+- Fair Tree ranks the users of an account by usage per share, fewest first, and gives rank `r` of `n` the factor `(n - r + 1) / n`. On our cluster this matches the factor Slurm reports for all but a handful of users.
+- The projection decays your usage by the half-life and adds your running jobs' billing until they end (on average, from `GrpTRESRunMins`). Everyone else's usage is held where it is now, as if they kept using at the same pace. If others stop too, you recover more slowly; if they use more, faster.
+- `priority` is the fairshare part of a job's priority, factor × `PriorityWeightFairShare`, in the same units as `prio`. It is nearly all of it here.
+- Users with no usage all share the top rank, so no one with usage can pass them. `best` is the highest factor you can reach.
 
 ## Parsing notes
 
