@@ -75,10 +75,11 @@ If you pass `-f sample.squeue`, the tool expects a header like:
 
 Summarize per-user running GPUs and queued GPUs with a ranked, colorized table.
 
-`scrime [-f|--file PATH] [-t|--threshold PCT] [-h|--help]`
+`scrime [-f|--file PATH] [-t|--threshold PCT] [--ascii] [-h|--help]`
 
 - `-f, --file PATH`  Read a saved `squeue` output (same format as `sremain`).
 - `-t, --threshold`  Percent of total running GPUs to flag as “CRIMINAL” (default: 10).
+- `--ascii`  Draw with ASCII only. This is the default when the locale isn't UTF-8. Use it if your terminal draws block characters double-width.
 
 Examples:
 ```
@@ -86,6 +87,31 @@ scrime
 scrime -f sample.squeue
 scrime -t 15
 ```
+
+Sample output (truncated):
+```
+GPU usage · 456 running · 102 queued · 32 users · limit 10%
+──────────────────────────────────────────────────────────────────
+  #  user          gpus  queue  share  █ run  ░ queued  ┆ limit
+  1  tsyeom          88      ·  19.3%  ████████████████████████  CRIMINAL
+  2  gongda0e        76      ·  16.7%  ████████████████████▋     CRIMINAL
+  3  jaehyunglim     33      ·   7.2%  █████████   ┆
+ 13  minkyoung       10    +30   2.2%  ██▋░░░░░░░░ ┆
+     pending only (no running GPUs)
+  ·  hjh9902          ·     +4      ·  ░           ┆
+```
+
+- Each bar shows running GPUs (`█`) followed by queued GPUs (`░`), scaled to the top user. So `█` plus `░` shows how far a user would reach if their queue ran.
+- `┆` marks the threshold. Blocks past it are red for users over the limit.
+- Users with only queued GPUs are listed at the bottom.
+
+## Output width
+
+Both tools fit their tables to the terminal width.
+
+- `sremain` keeps the usual 15-char columns when rows fit. Otherwise it switches to a compact layout, and with `-a` wraps the USERS column onto indented lines.
+- `scrime` resizes the usage bar (8–50 chars) to fill the remaining width and hides it when less than 8 chars are left. The summary line wraps between items.
+- The width comes from `$COLUMNS` if exported (`watch` does this), otherwise from the terminal. Piped or redirected output has no width limit. You can force a width with e.g. `COLUMNS=100 sremain -a | less -R`.
 
 ## Notes
 - Tested against saved outputs (`sample.squeue`) and live Slurm on our cluster.
