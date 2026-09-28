@@ -36,6 +36,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Terminal width to fit the tables into: $COLUMNS if exported (watch does this),
+# else the tty's width. 0 means no limit (output is piped or redirected).
+TERM_COLS=0
+if [[ "${COLUMNS:-}" =~ ^[0-9]+$ ]] && (( COLUMNS > 0 )); then
+  TERM_COLS=$COLUMNS
+elif [[ -t 1 ]]; then
+  TERM_COLS=$(tput cols 2>/dev/null || true)
+  [[ "$TERM_COLS" =~ ^[0-9]+$ ]] || TERM_COLS=0
+fi
+WIDE_COL=15       # column width of the default (wide) layout
+MIN_LAST_COL=20   # never wrap the last column narrower than this
+
 # Declare associative arrays
 declare -A CLUSTER_GPU_TOTAL   # partition -> total GPUs
 declare -A CLUSTER_CPU_TOTAL   # partition -> total CPUs
@@ -236,9 +248,109 @@ read_squeue() {
   done <<< "$squeue_lines"
 }
 
+# Length of the longest argument
+max_len() {
+  local s m=0
+  for s in "$@"; do
+    if (( ${#s} > m )); then m=${#s}; fi
+  done
+  echo "$m"
+}
+
+layout_total() {
+  local i n=${#LAYOUT_W[@]}
+  LAYOUT_TOTAL=$(( (n - 1) * LAYOUT_GAP ))
+  for (( i=0; i<n; i++ )); do LAYOUT_TOTAL=$(( LAYOUT_TOTAL + LAYOUT_W[i] )); done
+}
+
+# Choose column widths from each column's natural (content) width.
+# Wide layout pads all but the last column to WIDE_COL. If that doesn't fit in
+# TERM_COLS, use the compact layout (natural widths, 2-space gaps); if the last
+# column still overflows, narrow it so print_row wraps it.
+# Sets LAYOUT_W, LAYOUT_GAP and LAYOUT_TOTAL.
+choose_layout() {
+  local -a nat=("$@")
+  local n=$# i
+  LAYOUT_W=("${nat[@]}"); LAYOUT_GAP=1
+  for (( i=0; i<n-1; i++ )); do
+    if (( LAYOUT_W[i] < WIDE_COL )); then LAYOUT_W[i]=$WIDE_COL; fi
+  done
+  layout_total
+  if (( TERM_COLS > 0 && LAYOUT_TOTAL > TERM_COLS )); then
+    LAYOUT_W=("${nat[@]}"); LAYOUT_GAP=2
+    layout_total
+    if (( LAYOUT_TOTAL > TERM_COLS )); then
+      local room=$(( LAYOUT_W[n-1] - (LAYOUT_TOTAL - TERM_COLS) ))
+      if (( room < MIN_LAST_COL )); then room=$MIN_LAST_COL; fi
+      LAYOUT_W[n-1]=$room
+      layout_total
+    fi
+  fi
+}
+
+# Wrap a USERS summary like "a(1, 2), b(3, 4)" to $2 columns, breaking only
+# between entries (split on "), " since entries contain ", " themselves)
+wrap_users() {
+  awk -v w="$2" '{
+    n = split($0, it, /\), /)
+    line = ""
+    for (i = 1; i <= n; i++) {
+      s = it[i] (i < n ? ")," : "")
+      if (line != "" && length(line) + 1 + length(s) > w) { print line; line = s }
+      else line = (line == "" ? s : line " " s)
+    }
+    print line
+  }' <<< "$1"
+}
+
+# Print a colored row using the current layout; a last cell wider than its
+# column continues on following lines, indented to that column
+print_row() {
+  local color=$1; shift
+  local -a cells=("$@")
+  local n=$# i c line=""
+  for (( i=0; i<n-1; i++ )); do
+    printf -v c '%-*s%*s' "${LAYOUT_W[i]}" "${cells[i]}" "$LAYOUT_GAP" ''
+    line+=$c
+  done
+  local last=${cells[n-1]}
+  if (( ${#last} <= LAYOUT_W[n-1] )); then
+    printf "%b%s%b\n" "$color" "$line$last" "$ENDC"
+    return
+  fi
+  local indent part
+  printf -v indent '%*s' "${#line}" ''
+  while IFS= read -r part; do
+    printf "%b%s%b\n" "$color" "$line$part" "$ENDC"
+    line=$indent
+  done < <(wrap_users "$last" "${LAYOUT_W[n-1]}")
+}
+
+print_rule() {
+  local rule
+  printf -v rule '%*s' "$LAYOUT_TOTAL" ''
+  printf -- '%s\n' "${rule// /-}"
+}
+
+# Format "rem/total" cells into FRAC_CELLS with the slashes lined up.
+# Args: the rem values, "--", then the total values.
+frac_cells() {
+  local -a rems=() tots=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do rems+=("$1"); shift; done
+  shift
+  tots=("$@")
+  local rw i c
+  rw=$(max_len "${rems[@]}")
+  FRAC_CELLS=()
+  for i in "${!rems[@]}"; do
+    printf -v c '%*s/%s' "$rw" "${rems[i]}" "${tots[i]}"
+    FRAC_CELLS+=("$c")
+  done
+}
+
 print_gpu_table() {
-  printf "%b%-15s %-15s %-15s%b\n" "$HEADER" "GPU" "REMAIN" "CPU_REMAIN" "$ENDC"
-  printf -- '---------------------------------------------\n'
+  local -a parts=() rg=() tg=() rc=() tc=() colors=()
+  local part
   for part in "${!CLUSTER_GPU_TOTAL[@]}"; do
     local total_g=${CLUSTER_GPU_TOTAL[$part]}
     local total_c=${CLUSTER_CPU_TOTAL[$part]}
@@ -248,20 +360,26 @@ print_gpu_table() {
     local rem_c=$(( total_c - used_c ))
     local color="$OKGREEN"
     if (( rem_g == 0 )); then color="$FAIL"; fi
-    printf "%b%-15s %3s/%-13s %3s/%-13s%b\n" "$color" "$part" "$rem_g" "$total_g" "$rem_c" "$total_c" "$ENDC"
+    parts+=("$part"); rg+=("$rem_g"); tg+=("$total_g"); rc+=("$rem_c"); tc+=("$total_c")
+    colors+=("$color")
+  done
+
+  local -a gcells ccells
+  frac_cells "${rg[@]}" -- "${tg[@]}"; gcells=("${FRAC_CELLS[@]}")
+  frac_cells "${rc[@]}" -- "${tc[@]}"; ccells=("${FRAC_CELLS[@]}")
+
+  choose_layout "$(max_len GPU "${parts[@]}")" \
+    "$(max_len REMAIN "${gcells[@]}")" "$(max_len CPU_REMAIN "${ccells[@]}")"
+  print_row "$HEADER" "GPU" "REMAIN" "CPU_REMAIN"
+  print_rule
+  local i
+  for i in "${!parts[@]}"; do
+    print_row "${colors[i]}" "${parts[i]}" "${gcells[i]}" "${ccells[i]}"
   done
   echo
 }
 
 print_node_table() {
-  if (( ALL )); then
-    printf "%b%-15s %-15s %-15s %-15s %-45s%b\n" "$HEADER" "NODE" "GPU" "REMAIN" "CPU_REMAIN" "USERS(G, C)" "$ENDC"
-    printf -- '----------------------------------------------------------------------------------------------------\n'
-  else
-    printf "%b%-15s %-15s %-15s %-15s%b\n" "$HEADER" "NODE" "GPU" "REMAIN" "CPU_REMAIN" "$ENDC"
-    printf -- '------------------------------------------------------------\n'
-  fi
-
   # Sort node names numerically by suffix (n<number>)
   local tmp_list=""
   for n in "${!NODE_GPU_TYPE[@]}"; do
@@ -271,6 +389,7 @@ print_node_table() {
   local sorted_nodes
   sorted_nodes=$(printf "%b" "$tmp_list" | sort -k2,2n | awk '{print $1}')
 
+  local -a nodes=() parts=() rg=() tg=() rc=() tc=() colors=() users=()
   while read -r n; do
     [[ -z "$n" ]] && continue
     local part="${NODE_GPU_TYPE[$n]}"
@@ -310,13 +429,34 @@ print_node_table() {
       if [[ -n "$lines" ]]; then
         summary=$(printf "%b" "$lines" | sort -k1,1nr -k2,2 | awk '{printf "%s(%s, %s), ", $2, $1, $3}' | sed 's/, $//')
       fi
-      printf "%b%-15s %-15s %3s/%-13s %3s/%-13s %-45s%b\n" \
-        "$color" "$n" "$part" "$rem_g" "$total_g" "$rem_c" "$total_c" "$summary" "$ENDC"
-    else
-      printf "%b%-15s %-15s %3s/%-13s %3s/%-13s%b\n" \
-        "$color" "$n" "$part" "$rem_g" "$total_g" "$rem_c" "$total_c" "$ENDC"
+      users+=("$summary")
     fi
+    nodes+=("$n"); parts+=("$part"); rg+=("$rem_g"); tg+=("$total_g"); rc+=("$rem_c"); tc+=("$total_c")
+    colors+=("$color")
   done <<< "$sorted_nodes"
+
+  local -a gcells ccells
+  frac_cells "${rg[@]}" -- "${tg[@]}"; gcells=("${FRAC_CELLS[@]}")
+  frac_cells "${rc[@]}" -- "${tc[@]}"; ccells=("${FRAC_CELLS[@]}")
+
+  local -a header=("NODE" "GPU" "REMAIN" "CPU_REMAIN")
+  local -a widths=("$(max_len NODE "${nodes[@]}")" "$(max_len GPU "${parts[@]}")" \
+    "$(max_len REMAIN "${gcells[@]}")" "$(max_len CPU_REMAIN "${ccells[@]}")")
+  if (( ALL )); then
+    header+=("USERS(G, C)")
+    widths+=("$(max_len "USERS(G, C)" "${users[@]}")")
+  fi
+  choose_layout "${widths[@]}"
+  print_row "$HEADER" "${header[@]}"
+  print_rule
+  local i
+  for i in "${!nodes[@]}"; do
+    if (( ALL )); then
+      print_row "${colors[i]}" "${nodes[i]}" "${parts[i]}" "${gcells[i]}" "${ccells[i]}" "${users[i]}"
+    else
+      print_row "${colors[i]}" "${nodes[i]}" "${parts[i]}" "${gcells[i]}" "${ccells[i]}"
+    fi
+  done
   echo
 }
 
