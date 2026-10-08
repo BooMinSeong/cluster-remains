@@ -17,8 +17,8 @@ Show remaining GPU and CPU capacity per GPU type (partition) and per node in a S
   - Reload shell: `source ~/.bashrc`
 
 Installer details:
-- Adds a small alias block to your rc (`~/.bashrc` by default) so you can run `sremain`, `scrime` and `smine` from anywhere.
-- Also creates optional wrappers at `~/.local/bin/sremain`, `~/.local/bin/scrime` and `~/.local/bin/smine` if available.
+- Adds a small alias block to your rc (`~/.bashrc` by default) so you can run `sremain`, `scrime` and `sme` from anywhere.
+- Also creates optional wrappers at `~/.local/bin/sremain`, `~/.local/bin/scrime` and `~/.local/bin/sme` if available.
 - Uninstall: `./install.sh --uninstall`
 - Use a different rc file: `./install.sh --rc ~/.zshrc`
 
@@ -31,14 +31,14 @@ sremain() {
 scrime() {
   "/path/to/cluster-remains/scrime.sh" "$@"
 }
-smine() {
-  "/path/to/cluster-remains/smine.sh" "$@"
+sme() {
+  "/path/to/cluster-remains/sme.sh" "$@"
 }
 ```
 
 ## Output style
 
-`sremain` answers "where can I run?", `scrime` answers "who is using the GPUs?" and `smine` answers "how are my jobs doing?". All print the same way:
+`sremain` answers "where can I run?", `scrime` answers "who is using the GPUs?" and `sme` answers "how are my jobs doing?". All print the same way:
 
 - A bold title line with the totals, then one table (header, rule, rows).
 - One row per thing, with every value in its own aligned column.
@@ -141,9 +141,9 @@ GPU usage · 456 of 621 running · 102 queued · 32 users · limit 10% = 46
 - Users at or over the threshold are red and flagged `CRIMINAL`. Users queuing more than 50 GPUs are flagged `WTF`.
 - Users with only queued GPUs are listed at the bottom, with the type they queue the most on.
 
-## smine (my priority and jobs)
+## sme (my priority and jobs)
 
-`smine [-u|--user USER] [-a|--all] [-l|--long] [--ascii] [-h|--help]`
+`sme [-u|--user USER] [-a|--all] [-l|--long] [--ascii] [-h|--help]`
 
 The first line is your priority from fairshare out of its weight, how many of the other active users of your account rank ahead of you (active means any decayed usage; users with none are left out since they don't compete), your decayed usage against the median user with any usage, and your priority in a week if you start nothing new. Your jobs follow.
 
