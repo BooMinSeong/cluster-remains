@@ -143,7 +143,7 @@ GPU usage · 456 of 621 running · 102 queued · 32 users · limit 10% = 46
 
 ## smine (my priority and jobs)
 
-`smine [-u|--user USER] [-a|--all] [--ascii] [-h|--help]`
+`smine [-u|--user USER] [-a|--all] [-l|--long] [--ascii] [-h|--help]`
 
 The first line is your priority from fairshare out of its weight, how many of the other active users of your account rank ahead of you (active means any decayed usage; users with none are left out since they don't compete), your decayed usage against the median user with any usage, and your priority in a week if you start nothing new. Your jobs follow.
 
@@ -151,7 +151,10 @@ Colors on the first line: the priority is green, yellow or red by how close it i
 
 - `-u, --user USER`  Show USER instead of you.
 - `-a, --all`  Also show usage by GPU type and how your priority recovers over the next weeks.
+- `-l, --long`  One row per job, even past 20 jobs.
 - `--ascii`  Draw with ASCII only. This is the default when the locale isn't UTF-8.
+
+Past 20 jobs, jobs alike in name, state, type, GPUs, CPUs and (queued) reason share one row with their count (`×N`), the longest `ran`, the soonest `left`, the highest `prio`, the earliest estimated start and all their nodes, so hundreds of array tasks don't flood the terminal.
 
 Sample output:
 ```

@@ -14,22 +14,29 @@ NAME_MAX=20                 # cut job names longer than this
 ID_MAX=18                   # cut job ids (array task lists) longer than this
 BAR=20                      # width of a 100% share bar
 FAIRSHARE=0                 # 1 with -a: show usage by GPU type and recovery
+GROUP_OVER=20               # group alike jobs when there are more than this
+LONG=0                      # 1 with -l: one row per job however many
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [-u|--user USER] [-a|--all] [--ascii]
+Usage: $(basename "$0") [-u|--user USER] [-a|--all] [-l|--long] [--ascii]
 
 Show your priority and your jobs.
 
 Options:
   -u, --user USER  Show USER instead of you
   -a, --all        Also show usage by GPU type and how your priority recovers
+  -l, --long       One row per job, even past $GROUP_OVER jobs
       --ascii      Draw with ASCII only (default: Unicode on UTF-8 locales)
   -h, --help       Show this help
 
 First line: priority/weight, active users (with any usage) ranked ahead of
 you, your usage vs. the median active user, and priority in a week if you
 start nothing new. prio is a queued job's priority, as sprio shows it.
+
+Past $GROUP_OVER jobs, jobs alike in name, state, type, GPUs, CPUs and reason
+share one row with their count (×N), the longest ran, the soonest left,
+the highest prio, the earliest start and all their nodes.
 EOF
 }
 
@@ -39,6 +46,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "$1 requires a user"
       TARGET="$2"; shift 2 ;;
     -a|--all) FAIRSHARE=1; shift ;;
+    -l|--long) LONG=1; shift ;;
     --ascii) ASCII=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
@@ -369,6 +377,16 @@ short_time() {
   fi
 }
 
+# Seconds in a Slurm time like 2-17:36:01, 17:36:01 or 36:01 into REPLY;
+# -1 for other values (UNLIMITED, INVALID)
+time_secs() {
+  REPLY=-1
+  if [[ $1 =~ ^(([0-9]+)-)?(([0-9]+):)?([0-9]+):([0-9]+)$ ]]; then
+    REPLY=$(( ${BASH_REMATCH[2]:-0} * 86400 + 10#${BASH_REMATCH[4]:-0} * 3600 +
+              10#${BASH_REMATCH[5]} * 60 + 10#${BASH_REMATCH[6]} ))
+  fi
+}
+
 print_jobs() {
   local -a lines=()
   mapfile -t lines < <(squeue -h -u "$TARGET" -o "%i|%j|%T|%P|%D|%C|%b|%M|%L|%S|%r|%N|%K|%Q" 2>/dev/null |
@@ -379,10 +397,73 @@ print_jobs() {
   local nrun=0 nqueue=0 grun=0 gqueue=0 now
   printf -v now '%(%Y-%m-%dT%H:%M:%S)T' -1
   local id name state parts nodes cpus tres ran left start reason list
-  local gpus type more last tasks array prio
-  tbl_new rllllrrrrrl "id" "name" "state" "type" "" "gpus" "cpus" "ran" "left" "prio" "node / why queued"
+  local gpus tasks array prio key line
+
+  # Past GROUP_OVER jobs (unless -l), jobs alike in name, state, partitions,
+  # GPUs, CPUs and (queued) reason share one row: the first id, how many,
+  # the longest ran, the soonest left, the highest prio, the earliest
+  # estimated start and every node
+  local group=0
+  if (( ! LONG && ${#lines[@]} > GROUP_OVER )); then group=1; fi
+  local -a order=()
+  local -A g_n=() g_line=() g_ran=() g_left=() g_prio=() g_start=() g_nodes=()
+
   for line in "${lines[@]}"; do
     IFS='|' read -r id name state parts nodes cpus tres ran left start reason list array prio <<< "$line"
+    gpus=0
+    if [[ $tres == *gpu* ]]; then
+      gpus=${tres##*gpu}; gpus=${gpus##*[:=]}
+      [[ $gpus =~ ^[0-9]+$ ]] || gpus=1
+      gpus=$(( gpus * nodes ))
+    fi
+    tasks=1
+    case $state in
+      RUNNING) nrun=$(( nrun + 1 )) grun=$(( grun + gpus )) ;;
+      PENDING)
+        array_tasks "$array"; tasks=$REPLY
+        nqueue=$(( nqueue + tasks )) gqueue=$(( gqueue + gpus * tasks )) ;;
+    esac
+    if (( ! group )); then
+      order+=("$line")
+      g_n[$line]=1
+      continue
+    fi
+
+    key="$name|$state|$parts|$gpus|$cpus"
+    if [[ $state == PENDING ]]; then key+="|$reason"; fi
+    if [[ -z ${g_n[$key]:-} ]]; then
+      order+=("$key")
+      g_n[$key]=0 g_line[$key]=$line g_prio[$key]=0 g_start[$key]=""
+      g_ran[$key]=$ran g_left[$key]=$left g_nodes[$key]=""
+    fi
+    g_n[$key]=$(( g_n[$key] + tasks ))
+    time_secs "$ran"; local a=$REPLY
+    time_secs "${g_ran[$key]}"
+    if (( a > REPLY )); then g_ran[$key]=$ran; fi
+    time_secs "$left"; a=$REPLY
+    time_secs "${g_left[$key]}"
+    if (( a >= 0 && (REPLY < 0 || a < REPLY) )); then g_left[$key]=$left; fi
+    if [[ $prio =~ ^[0-9]+$ ]] && (( prio > ${g_prio[$key]:-0} )); then g_prio[$key]=$prio; fi
+    if [[ $start == 20* && $start > $now && ( -z ${g_start[$key]} || $start < ${g_start[$key]} ) ]]; then
+      g_start[$key]=$start
+    fi
+    if [[ -n $list && $list != "(null)" ]]; then g_nodes[$key]+=" $list"; fi
+  done
+
+  local type more count
+  tbl_new rrllllrrrrrl "id" "" "name" "state" "type" "" "gpus" "cpus" "ran" "left" "prio" "node / why queued"
+  for key in "${order[@]}"; do
+    count=""
+    if (( group )); then
+      IFS='|' read -r id name state parts nodes cpus tres ran left start reason list array prio <<< "${g_line[$key]}"
+      ran=${g_ran[$key]} left=${g_left[$key]} prio=${g_prio[$key]} start=${g_start[$key]}
+      list=$(printf '%s\n' ${g_nodes[$key]} | sort -uV | tr '\n' "$ITEM")
+      list=${list%"$ITEM"}
+      if (( g_n[$key] > 1 )); then count="$d×${g_n[$key]}$e"; fi
+      if [[ $G_NONE != "·" && -n $count ]]; then count="${d}x${g_n[$key]}$e"; fi
+    else
+      IFS='|' read -r id name state parts nodes cpus tres ran left start reason list array prio <<< "$key"
+    fi
 
     gpus=0
     if [[ $tres == *gpu* ]]; then
@@ -401,7 +482,6 @@ print_jobs() {
     local -a why=()
     case $state in
       RUNNING)
-        nrun=$(( nrun + 1 )) grun=$(( grun + gpus ))
         state=running prio=$none
         short_time "$ran"; ran=$REPLY
         short_time "$left"
@@ -409,8 +489,6 @@ print_jobs() {
         if [[ $left =~ ^[0-9]+m$ ]]; then left="$C_RED$left$e"; fi
         why=("$list") ;;
       PENDING)
-        array_tasks "$array"; tasks=$REPLY
-        nqueue=$(( nqueue + tasks )) gqueue=$(( gqueue + gpus * tasks ))
         state="${C_YELLOW}queued$e" ran=$none left=$none
         explain_reason "$reason"
         if (( REPLY_BAD )); then
@@ -431,9 +509,9 @@ print_jobs() {
         short_time "$left"; left=$REPLY
         why=("$list") ;;
     esac
-    last=$(IFS=$ITEM; echo "${why[*]}")
+    line=$(IFS=$ITEM; echo "${why[*]}")
     if (( gpus == 0 )); then gpus=$none; fi
-    tbl_row "$id" "$name" "$state" "$type" "$more" "$gpus" "$cpus" "$ran" "$left" "$prio" "$last"
+    tbl_row "$id" "$count" "$name" "$state" "$type" "$more" "$gpus" "$cpus" "$ran" "$left" "$prio" "$line"
   done
 
   local stats=("$TARGET")
@@ -442,6 +520,7 @@ print_jobs() {
     stats+=("GPU limit $GPU_LIMIT")
     if (( GPU_USED >= GPU_LIMIT )); then stats[-1]="$C_RED${stats[-1]}$e"; fi
   fi
+  if (( group )); then stats+=("${d}alike jobs grouped; -l for each$e"); fi
   local title="My jobs"
   if [[ $TARGET != "${USER:-}" ]]; then title="Jobs"; fi
   print_title "$title" "${stats[@]}"
